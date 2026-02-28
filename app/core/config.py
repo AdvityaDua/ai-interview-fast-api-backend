@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str
     DEEPGRAM_KEY: str
     GROQ_API_KEY: str
+    REDIS_URL: str = "redis://localhost:6379"
+    PISTON_URL: str = "http://localhost:2000"
 
     class Config:
         env_file = ".env"

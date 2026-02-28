@@ -55,7 +55,7 @@ class GeminiClient:
         )
         return response.text
 
-    async def generate_question(self, history: List[dict], context_summary: str, interview_type: str = "technical") -> QuestionEvaluation:
+    async def generate_question(self, history: List[dict], context_summary: str, interview_type: str = "technical", time_context: str = "") -> QuestionEvaluation:
         prompt_history = "INTERVIEW HISTORY:\n"
         for turn in history:
             role = turn['role']
@@ -67,6 +67,8 @@ class GeminiClient:
     INTERVIEW TYPE: TECHNICAL ROUND
     - Ask about data structures, algorithms, system design, coding patterns.
     - Present coding problems and ask the candidate to explain their approach.
+    - You CAN ask the candidate to write actual code — they have a code editor available.
+      When you want them to code, say something like "Please write the code for this in the editor and submit it."
     - Dig deep into technical concepts. Don't accept surface-level answers.
     - If the candidate shares code, review it for correctness, efficiency, and style.
     - Cover topics from the JD: specific languages, frameworks, and tools.
@@ -86,6 +88,7 @@ class GeminiClient:
     - Evaluate how the candidate breaks down ambiguous problems.
     - Test estimation skills and ability to handle incomplete information.
     - Focus on the thought process, not just the final answer.
+    - You CAN ask them to implement their solution in code — they have a code editor available.
     """,
             "hr": """
     INTERVIEW TYPE: HR ROUND
@@ -96,6 +99,19 @@ class GeminiClient:
     - Assess alignment between the candidate's values and the company's culture.
     """
         }.get(interview_type, "")
+
+        # Build time management section if time context exists
+        time_section = ""
+        if time_context:
+            time_section = f"""
+        TIME MANAGEMENT:
+        {time_context}
+        - Pace your questions to fit the interview within the target duration.
+        - If remaining time < 3 minutes: Begin wrapping up. Ask a final question or make closing remarks.
+        - If remaining time < 1 minute or OVER TIME: Set action to END. Provide a brief closing summary.
+        - You may exceed the target by ±2 minutes if you are mid-topic — do NOT cut off abruptly.
+        - Prioritize the most important skills from the JD when time is limited.
+        """
 
         prompt = f"""
         You are an expert interviewer conducting a realtime {interview_type} interview.
@@ -111,6 +127,7 @@ class GeminiClient:
         CONTEXT SUMMARY:
         {context_summary}
         {type_rules}
+        {time_section}
         
         YOUR GOAL:
         1.  Evaluate the candidate's last answer (if any).
