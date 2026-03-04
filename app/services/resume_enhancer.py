@@ -1,4 +1,5 @@
 import json
+from typing import Optional, List, Any
 from google import genai
 from google.genai import types
 from app.core.config import settings
@@ -13,78 +14,48 @@ class ResumeEnhancerService:
         if not self.client:
             raise ValueError("GOOGLE_API_KEY is not configured.")
             
-        if request.resume:
-            resume_data = request.resume
-        else:
-            resume_data = request
-            
-        analytics = resume_data.analytics
-        enhancement = resume_data.enhancement
+        # Extract data directly or from nested resume object
+        rd = request.resume if request.resume else request
+        an = getattr(rd, 'analytics', None)
+        en = getattr(rd, 'enhancement', None)
         
-        # Prepare context for Gemini
-        context_data = {
+        # Build optimized prompt context
+        context = {
             "cv_quality": {
-                "overall_score": analytics.cv_quality.overall_score,
-                "subscores": [
-                    {
-                        "dimension": sub.dimension,
-                        "score": sub.score,
-                        "max_score": sub.max_score,
-                        "evidence": sub.evidence
-                    }
-                    for sub in analytics.cv_quality.subscores
-                ]
+                "score": an.cv_quality.overall_score if an and an.cv_quality else 0,
+                "details": [s.model_dump() for s in an.cv_quality.subscores] if an and an.cv_quality and an.cv_quality.subscores else []
             },
             "jd_match": {
-                "overall_score": analytics.jd_match.overall_score if analytics.jd_match else 0,
-                "subscores": [
-                    {
-                        "dimension": sub.dimension,
-                        "score": sub.score,
-                        "max_score": sub.max_score,
-                        "evidence": sub.evidence
-                    }
-                    for sub in (analytics.jd_match.subscores if analytics.jd_match else [])
-                ]
+                "score": an.jd_match.overall_score if an and an.jd_match else 0,
+                "details": [s.model_dump() for s in an.jd_match.subscores] if an and an.jd_match and an.jd_match.subscores else []
             },
-            "key_takeaways": {
-                "green_flags": analytics.key_takeaways.green_flags,
-                "red_flags": analytics.key_takeaways.red_flags
-            },
-            "tailored_resume": {
-                "summary": enhancement.tailored_resume.summary,
-                "skills": enhancement.tailored_resume.skills,
-                "experience": enhancement.tailored_resume.experience,
-                "projects": enhancement.tailored_resume.projects
-            },
-            "top_1_percent_gap": {
-                "strengths": enhancement.top_1_percent_gap.strengths,
-                "gaps": enhancement.top_1_percent_gap.gaps,
-                "actionable_next_steps": enhancement.top_1_percent_gap.actionable_next_steps
-            }
+            "tailored_data": en.model_dump() if en else {}
         }
         
-        prompt = f"""You are an expert resume writer and career coach. Based on the comprehensive resume analysis data provided, generate the best possible professional resume content.
-
-ANALYSIS DATA:
-{json.dumps(context_data, indent=2)}
-
-YOUR TASK:
-Generate a complete, professional resume strictly answering as a JSON object matching the `ResumeBuilderResponse` schema formatting.
-Extract and enhance all information intelligently from the evidence and data provided. Ensure personal_info is completely formulated (even if blank infer placeholders).
-"""
+        prompt = f"""You are an expert resume writer. Using the analysis data below, generate a professional, high-impact resume.
+        
+        ANALYSIS DATA:
+        {json.dumps(context, indent=2)}
+        
+        TASK:
+        Return a JSON object matching the `ResumeBuilderResponse` schema.
+        - Structure `personal_info` accurately.
+        - Categorize `skills` into `frontend`, `backend`, and `tools_cloud`.
+        - Provide `experience` descriptions as impactful bullet point lists.
+        - Ensure `projects` have `technologies` (list) and `highlights` (bullets).
+        """
         
         response = self.client.models.generate_content(
-            model='gemini-2.5-pro',
+            model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=ResumeBuilderResponse,
-                temperature=0.2,
+                temperature=0.1,
             )
         )
         
-        result_dict = json.loads(response.text)
-        return ResumeBuilderResponse(**result_dict)
+        # Parse and validate the response
+        return ResumeBuilderResponse.model_validate_json(response.text)
 
 resume_enhancer_service = ResumeEnhancerService()
