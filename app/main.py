@@ -20,7 +20,7 @@ def create_app() -> FastAPI:
     # Configure CORS - added after Auth so it wraps it as the outermost layer
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"],
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000", "https://aiforjob.ai", "https://www.aiforjob.ai", "https://api.aiforjob.ai", "https://www.api.aiforjob.ai"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

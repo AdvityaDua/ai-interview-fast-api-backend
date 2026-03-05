@@ -20,20 +20,13 @@ class AuthMiddleware:
         method = scope.get("method", "").upper()
         path = scope.get("path", "")
 
-        # 3. Bypass OPTIONS preflight
-        if method == "OPTIONS":
+        # 3. Bypass unprotected paths (including OPTIONS preflight)
+        unprotected_paths = ["/docs", "/openapi.json", "/redoc", "/api/v1/health", "/api/v1/interview/", "/api/v1/code/"]
+        if method == "OPTIONS" or any(path.startswith(p) for p in unprotected_paths):
             await self.app(scope, receive, send)
             return
 
-        # 4. Bypass unprotected paths
-        unprotected_paths = ["/docs", "/openapi.json", "/redoc", "/api/v1/health", "/api/v1/interview/", "/api/v1/code/"]
-        # 4. Bypass unprotected paths
-        unprotected_paths = ["/docs", "/openapi.json", "/redoc", "/api/v1/health", "/api/v1/interview/", "/api/v1/code/"]
-        if any(path.startswith(p) for p in unprotected_paths):
-            await self.app(scope, receive, send)
-            return
-
-        # 5. Extract Authorization header from scope
+        # 4. Extract Authorization header from scope
         headers = dict(scope.get("headers", []))
         auth_header = headers.get(b"authorization", b"").decode("utf-8")
 
