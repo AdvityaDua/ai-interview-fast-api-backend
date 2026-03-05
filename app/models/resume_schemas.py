@@ -72,64 +72,58 @@ class ResumeAnalysisRequest(BaseSchema):
     analytics: Optional[Analytics] = None
     enhancement: Optional[Enhancement] = None
 
-# Resume Built Output Sub-Schemas (Explicit for Gemini)
-class ResumePersonalInfo(GeminiBaseSchema):
-    name: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    location: Optional[str] = None
+# Resume Built Output Schemas (Explicitly Typed for Gemini Structured Output)
+class EducationDetail(BaseSchema):
+    degree: str
+    institution: str
+    year: str
+    details: Optional[str] = None
+
+class ExperienceDetail(BaseSchema):
+    role: str
+    company: str
+    duration: str
+    responsibilities: List[str]
+
+class ProjectDetail(BaseSchema):
+    title: str
+    description: str
+    technologies: List[str]
+    link: Optional[str] = None
+
+class PersonalInfo(BaseSchema):
+    name: str
+    email: str
+    phone: str
     linkedin: Optional[str] = None
     github: Optional[str] = None
-    website: Optional[str] = None
+    portfolio: Optional[str] = None
 
-class ResumeExperience(GeminiBaseSchema):
-    company: Optional[str] = None
-    title: Optional[str] = None
-    location: Optional[str] = None
-    duration: Optional[str] = None
-    description: Optional[List[str]] = Field(default_factory=list)
+class CertificationDetail(BaseSchema):
+    name: str
+    issuer: str
+    year: str
 
-class ResumeProject(GeminiBaseSchema):
-    name: Optional[str] = None
-    duration: Optional[str] = None
-    description: Optional[str] = None
-    technologies: Optional[List[str]] = Field(default_factory=list)
-    highlights: Optional[List[str]] = Field(default_factory=list)
-    github: Optional[str] = None
-    demo: Optional[str] = None
+class LanguageDetail(BaseSchema):
+    language: str
+    proficiency: str
 
-class ResumeEducation(GeminiBaseSchema):
-    institution: Optional[str] = None
-    degree: Optional[str] = None
-    field: Optional[str] = None
-    duration: Optional[str] = None
-    location: Optional[str] = None
-    gpa: Optional[str] = None
+class SkillCategories(BaseSchema):
+    programming_languages: List[str]
+    frameworks: List[str]
+    tools: List[str]
+    other: List[str]
 
-class ResumeCertification(GeminiBaseSchema):
-    name: Optional[str] = None
-    issuer: Optional[str] = None
-    date: Optional[str] = None
-
-class ResumeLanguage(GeminiBaseSchema):
-    name: Optional[str] = None
-    proficiency: Optional[str] = None
-
-class ResumeSkills(GeminiBaseSchema):
-    frontend: Optional[List[str]] = Field(default_factory=list)
-    backend: Optional[List[str]] = Field(default_factory=list)
-    tools_cloud: Optional[List[str]] = Field(default_factory=list)
-
-class ResumeBuilderContent(GeminiBaseSchema):
-    personal_info: Optional[ResumePersonalInfo] = None
-    professional_summary: Optional[str] = None
-    skills: Optional[ResumeSkills] = None
-    experience: Optional[List[ResumeExperience]] = Field(default_factory=list)
-    projects: Optional[List[ResumeProject]] = Field(default_factory=list)
-    education: Optional[List[ResumeEducation]] = Field(default_factory=list)
-    achievements: Optional[List[str]] = Field(default_factory=list)
-    certifications: Optional[List[ResumeCertification]] = Field(default_factory=list)
-    languages: Optional[List[ResumeLanguage]] = Field(default_factory=list)
+class ResumeBuilderContent(BaseSchema):
+    personal_info: PersonalInfo
+    professional_summary: str
+    skills: SkillCategories
+    experience: List[ExperienceDetail]
+    projects: List[ProjectDetail]
+    education: List[EducationDetail]
+    achievements: List[str]
+    certifications: List[CertificationDetail]
+    languages: List[LanguageDetail]
 
 class ResumeBuilderResponse(GeminiBaseSchema):
     status: Optional[str] = "success"

@@ -27,6 +27,8 @@ class AuthMiddleware:
 
         # 4. Bypass unprotected paths
         unprotected_paths = ["/docs", "/openapi.json", "/redoc", "/api/v1/health", "/api/v1/interview/", "/api/v1/code/"]
+        # 4. Bypass unprotected paths
+        unprotected_paths = ["/docs", "/openapi.json", "/redoc", "/api/v1/health", "/api/v1/interview/", "/api/v1/code/"]
         if any(path.startswith(p) for p in unprotected_paths):
             await self.app(scope, receive, send)
             return
