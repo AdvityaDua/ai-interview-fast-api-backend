@@ -73,25 +73,25 @@ class ResumeAnalysisRequest(BaseSchema):
     enhancement: Optional[Enhancement] = None
 
 # Resume Built Output Schemas (Explicitly Typed for Gemini Structured Output)
-class EducationDetail(BaseSchema):
+class EducationDetail(GeminiBaseSchema):
     degree: str
     institution: str
     year: str
     details: Optional[str] = None
 
-class ExperienceDetail(BaseSchema):
+class ExperienceDetail(GeminiBaseSchema):
     role: str
     company: str
     duration: str
     responsibilities: List[str]
 
-class ProjectDetail(BaseSchema):
+class ProjectDetail(GeminiBaseSchema):
     title: str
     description: str
     technologies: List[str]
     link: Optional[str] = None
 
-class PersonalInfo(BaseSchema):
+class PersonalInfo(GeminiBaseSchema):
     name: str
     email: str
     phone: str
@@ -99,22 +99,22 @@ class PersonalInfo(BaseSchema):
     github: Optional[str] = None
     portfolio: Optional[str] = None
 
-class CertificationDetail(BaseSchema):
+class CertificationDetail(GeminiBaseSchema):
     name: str
     issuer: str
     year: str
 
-class LanguageDetail(BaseSchema):
+class LanguageDetail(GeminiBaseSchema):
     language: str
     proficiency: str
 
-class SkillCategories(BaseSchema):
+class SkillCategories(GeminiBaseSchema):
     programming_languages: List[str]
     frameworks: List[str]
     tools: List[str]
     other: List[str]
 
-class ResumeBuilderContent(BaseSchema):
+class ResumeBuilderContent(GeminiBaseSchema):
     personal_info: PersonalInfo
     professional_summary: str
     skills: SkillCategories
