@@ -176,13 +176,17 @@ class GeminiClient:
         
         {prompt_history}
         
-        IMPORTANT INSTRUCTIONS FOR question_wise_analysis:
-        - You MUST include EVERY SINGLE question you asked during the interview as a separate entry.
+        IMPORTANT INSTRUCTIONS:
+        - You MUST include EVERY SINGLE question you asked during the interview as a separate entry in question_wise_analysis.
         - Do NOT consolidate or merge questions. Each question gets its own entry.
-        - If you asked a follow-up question, it is its own separate entry with its own score.
         - Number the question_ids sequentially starting from 1.
         - The overall_score in summary should be out of 100.
         - Each individual question score should be out of 10.
+        - For the IMPROVEMENT PLAN, you MUST provide:
+            1. immediate_actions: Things to do in the next 24-48 hours.
+            2. 1_week_plan: Focused study and practice for the next 7 days.
+            3. 1_month_plan: Longer-term skill development for the next 30 days.
+        - You MUST populate EVERY SINGLE FIELD in the JSON schema. Do not leave any field as null or empty unless the schema explicitly allows it (and even then, prefer providing data).
         
         Generate the final detailed evaluation report.
         """

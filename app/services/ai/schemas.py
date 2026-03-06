@@ -154,8 +154,8 @@ class BehavioralInsights(BaseModel):
 
 class ImprovementPlan(BaseModel):
     immediate_actions: List[str]
-    plan_30_days: List[str] = Field(..., alias="30_day_plan")
-    plan_90_days: List[str] = Field(..., alias="90_day_plan")
+    plan_1_week: List[str] = Field(..., alias="1_week_plan")
+    plan_1_month: List[str] = Field(..., alias="1_month_plan")
 
 class Verdict(BaseModel):
     strengths_to_highlight: List[str]
@@ -165,9 +165,9 @@ class Verdict(BaseModel):
 class FinalEvaluation(BaseModel):
     """Schema for the final comprehensive report."""
     summary: Summary
-    dimension_scores: Optional[DimensionScores] = None
-    question_wise_analysis: Optional[List[QuestionAnalysis]] = None
-    skill_gap_analysis: Optional[SkillGapAnalysis] = None
-    behavioral_insights: Optional[BehavioralInsights] = None
-    improvement_plan: Optional[ImprovementPlan] = None
-    verdict: Optional[Verdict] = None
+    dimension_scores: DimensionScores
+    question_wise_analysis: List[QuestionAnalysis]
+    skill_gap_analysis: SkillGapAnalysis
+    behavioral_insights: BehavioralInsights
+    improvement_plan: ImprovementPlan
+    verdict: Verdict
