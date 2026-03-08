@@ -17,11 +17,21 @@ router = APIRouter()
 # -----------------------
 
 def extract_text_from_pdf(file_path: str) -> str:
-    """Extract text from PDF using pdfplumber."""
+    """Extract text from PDF using pdfplumber with a 7-page limit."""
     text = ""
-    with pdfplumber.open(file_path) as pdf:
-        for page in pdf.pages:
-            text += (page.extract_text() or "") + "\n"
+    try:
+        with pdfplumber.open(file_path) as pdf:
+            if len(pdf.pages) > 7:
+                raise ValueError(f"Resume exceeds maximum allowed length of 7 pages (found {len(pdf.pages)} pages).")
+            
+            for page in pdf.pages:
+                text += (page.extract_text() or "") + "\n"
+    except Exception as e:
+        if "maximum allowed length" in str(e):
+            raise
+        # Fallback or other errors
+        raise RuntimeError(f"Failed to extract PDF: {str(e)}")
+        
     return text.strip()
 
 
@@ -125,12 +135,24 @@ def extract_text(file_path: str) -> str:
 
 
 def save_and_extract(upload: UploadFile) -> str:
-    """Temporarily save uploaded file and extract its text."""
+    """Temporarily save uploaded file, extract its text, and enforce optimizations."""
     with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(upload.filename)[1]) as tmp:
         shutil.copyfileobj(upload.file, tmp)
         tmp_path = tmp.name
     try:
         text = extract_text(tmp_path)
+        
+        # Optimization: Enforce reasonable character limit for processing (around 7 dense pages)
+        # 1 page is roughly 3000-4000 chars. 7 pages = ~25,000 chars.
+        MAX_CHARS = 30000 
+        if len(text) > MAX_CHARS:
+            # We don't necessarily want to fail here if it's just text, 
+            # but for optimization, we could trim or warn.
+            # However, the user said "except resume of 7 pages at max", 
+            # so for non-PDFs where we can't count pages accurately, 30k chars is a safe limit.
+            if not upload.filename.lower().endswith('.pdf'):
+                raise ValueError(f"Extracted content exceeds the equivalent of 7 pages (~{MAX_CHARS} characters).")
+            
     finally:
         os.remove(tmp_path)
     return text
