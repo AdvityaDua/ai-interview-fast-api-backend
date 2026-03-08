@@ -17,7 +17,7 @@ async def generate_final_enhanced_resume(
     try:
         body = await request.json()
         validated_data = ResumeAnalysisRequest.model_validate(body)
-        return await resume_enhancer_service.enhance_resume(validated_data)
+        return await resume_enhancer_service.enhance_resume(validated_data, user)
         
     except Exception as e:
         raise HTTPException(
