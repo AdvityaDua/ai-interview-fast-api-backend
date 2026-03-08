@@ -10,7 +10,7 @@ class ResumeEnhancerService:
         self.api_key = settings.GOOGLE_API_KEY
         self.client = genai.Client(api_key=self.api_key) if self.api_key else None
         
-    async def enhance_resume(self, request: ResumeAnalysisRequest, user: dict = None) -> ResumeBuilderResponse:
+    async def enhance_resume(self, request: ResumeAnalysisRequest, user: dict = None, raw_text: str = "") -> ResumeBuilderResponse:
         if not self.client:
             raise ValueError("GOOGLE_API_KEY is not configured.")
             
@@ -33,18 +33,21 @@ class ResumeEnhancerService:
             "user_info": user if user else {}
         }
         
-        prompt = f"""You are an expert resume writer. Using the analysis data below, generate a professional, high-impact resume.
+        prompt = f"""You are an expert resume writer. Using the analysis data and the raw resume text below, generate a professional, high-impact resume.
+        
+        RAW RESUME TEXT:
+        {raw_text}
         
         ANALYSIS DATA:
         {json.dumps(context, indent=2)}
         
         TASK:
         Return a JSON object matching the `ResumeBuilderResponse` schema.
-        - Structure `personal_info` accurately. Use the `user_info` email if provided. DO NOT use generic or dummy names (like "Akash Bargoti" or "John Doe") if personal info is not provided; leave the name as empty string or "[Your Name]" instead. 
+        - Structure `personal_info` accurately. Use the `user_info` email if provided. DO NOT use generic or dummy names (like "Akash Bargoti" or "John Doe") if personal info is not provided; leave the name as empty string or "[Your Name]" instead. Extract correct phone, GitHub, LinkedIn, and education directly from RAW RESUME TEXT.
         - Categorize `skills` into `frontend`, `backend`, and `tools_cloud`.
-        - Provide `experience` descriptions as impactful bullet point lists.
+        - Provide `experience` descriptions as impactful bullet point lists. Use EXACT history from RAW RESUME TEXT.
         - Ensure `projects` have `technologies` (list) and `highlights` (bullets).
-        - DO NOT hallucinate fake education, certifications, or experience. If the data is missing from ANALYSIS DATA, return empty lists for those fields.
+        - DO NOT hallucinate fake education, certifications, or experience. If the data is missing from ANALYSIS DATA or RAW RESUME TEXT, return empty lists for those fields.
         """
         
         response = self.client.models.generate_content(
