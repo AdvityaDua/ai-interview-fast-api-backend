@@ -47,14 +47,13 @@ async def generate_final_enhanced_resume(
                     finally:
                         os.remove(tmp_path)
             except Exception as e:
-                print(f"Warning: Failed to extract raw text from {resume_url}: {e}")
+                pass
 
         # 2. Invoke generator
         return await resume_enhancer_service.enhance_resume(validated_data, user, raw_text)
         
     except Exception as e:
         import traceback
-        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail=f"AI resume generation failed: {str(e)}"

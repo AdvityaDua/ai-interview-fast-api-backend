@@ -37,12 +37,10 @@ async def text_to_speech(payload: dict):
             )
             
             if response.status_code != 200:
-                print(f"[TTS] Deepgram error: {response.status_code} - {response.text}")
                 # Fallback or error
                 raise HTTPException(status_code=response.status_code, detail="Deepgram TTS failed")
 
             return Response(content=response.content, media_type="audio/mp3")
             
         except Exception as e:
-            print(f"[TTS] Exception: {e}")
             raise HTTPException(status_code=500, detail=str(e))

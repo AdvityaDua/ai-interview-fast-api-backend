@@ -26,17 +26,16 @@ async def _analyze_and_cleanup(user_id: str, audio_path: str, answer_idx: int):
         # Persist updated metrics to Redis
         await manager.save_session_to_cache(user_id)
 
-        print(f"[AudioAnalysis] Answer {answer_idx} done: confidence={metrics.composite_confidence}, wpm={metrics.words_per_minute}")
+        pass
     except Exception as e:
-        print(f"[AudioAnalysis] Error analyzing answer {answer_idx}: {e}")
+        pass
     finally:
         # Delete the audio file to free disk space
         try:
             if os.path.exists(audio_path):
                 os.remove(audio_path)
-                print(f"[AudioAnalysis] Deleted {audio_path}")
         except Exception as e:
-            print(f"[AudioAnalysis] Error deleting {audio_path}: {e}")
+            pass
 
 
 @ws_router.websocket("/transcribe/{client_id}")
@@ -53,7 +52,6 @@ async def stt_stream_endpoint(
     """
     user_id = user_payload.get("sub")
     await websocket.accept()
-    print(f"[STT WS] Client connected (user: {user_id})")
 
     if user_id not in answer_counts:
         answer_counts[user_id] = 0
@@ -87,7 +85,6 @@ async def stt_stream_endpoint(
                     await dg_stream.finish()
                     audio_path = dg_stream.save_audio(user_id, answer_idx)
                     if audio_path:
-                        print(f"[STT] Answer audio saved: {audio_path}")
                         # Fire background analysis — don't await it
                         asyncio.create_task(
                             _analyze_and_cleanup(user_id, audio_path, answer_idx)
@@ -96,9 +93,9 @@ async def stt_stream_endpoint(
                     break 
 
     except WebSocketDisconnect:
-        print(f"[STT WS] Client disconnected (user: {user_id})")
+        pass
     except Exception as e:
-        print(f"[STT WS] Error: {e}")
+        pass
     finally:
         if dg_stream:
             try:
@@ -167,7 +164,6 @@ async def stream_interview_endpoint(
                 "role": session.role,
                 "company": session.company,
             }, user_id)
-            print(f"[WS] Session restored for user {user_id} ({len(session.history)} messages)")
         
         elif not session.history:
             # ── Brand new session — wait for init payload ──
@@ -252,9 +248,7 @@ async def stream_interview_endpoint(
     except WebSocketDisconnect:
         # Do NOT clear session on disconnect — Redis keeps it alive for reconnect
         manager.disconnect(user_id)
-        print(f"[WS] User {user_id} disconnected (session preserved in Redis)")
     except Exception as e:
-        print(f"Error in stream_endpoint: {e}")
         manager.disconnect(user_id)
         try:
             await websocket.close()

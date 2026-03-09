@@ -61,7 +61,6 @@ class DeepgramSTTService:
 
         # Open WebSocket to Deepgram
         ws = await websockets.connect(url, additional_headers=headers)
-        print("[Deepgram] Live connection opened")
 
         stream = DeepgramStream(ws, on_partial, on_final)
         
@@ -114,9 +113,9 @@ class DeepgramStream:
 
 
         except websockets.exceptions.ConnectionClosed:
-            print("[Deepgram] Connection closed")
+            pass
         except Exception as e:
-            print(f"[Deepgram] Listen error: {e}")
+            pass
 
     async def send(self, audio_bytes: bytes):
         """Send raw audio bytes to Deepgram."""
@@ -126,7 +125,7 @@ class DeepgramStream:
         try:
             await self.ws.send(audio_bytes)
         except Exception as e:
-            print(f"[Deepgram] Send error: {e}")
+            pass
 
     async def finish(self):
         """Close the Deepgram connection gracefully."""
@@ -140,9 +139,8 @@ class DeepgramStream:
             # Wait briefly for final responses
             await asyncio.sleep(0.5)
             await self.ws.close()
-            print("[Deepgram] Connection closed gracefully")
         except Exception as e:
-            print(f"[Deepgram] Error closing: {e}")
+            pass
         
         # Cancel listen task
         if self._listen_task and not self._listen_task.done():
@@ -176,7 +174,6 @@ class DeepgramStream:
 
         size_kb = filepath.stat().st_size / 1024
         duration_s = len(all_audio) / (self._sample_rate * 2)
-        print(f"[Audio] Saved {filename} ({size_kb:.1f} KB, {duration_s:.1f}s)")
         return str(filepath)
 
 

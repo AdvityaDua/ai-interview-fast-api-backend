@@ -109,7 +109,6 @@ class AudioAnalyzer:
             )
 
             if response.status_code != 200:
-                print(f"[AudioAnalyzer] Deepgram error {response.status_code}: {response.text[:200]}")
                 return None
 
             return response.json()
@@ -276,11 +275,8 @@ class AudioAnalyzer:
 
     async def analyze_audio_file(self, filepath: str, answer_index: int) -> AudioMetrics:
         """Analyze a single audio file and return metrics."""
-        print(f"[AudioAnalyzer] Analyzing: {Path(filepath).name}")
         dg_response = await self._transcribe_file(filepath)
         metrics = self._compute_metrics(dg_response, answer_index)
-        print(f"[AudioAnalyzer] Answer {answer_index}: confidence={metrics.composite_confidence}, "
-              f"wpm={metrics.words_per_minute}, fillers={metrics.filler_word_count}")
         return metrics
 
     async def analyze_session(self, session_id: str) -> SessionAnalysis:
@@ -292,10 +288,10 @@ class AudioAnalyzer:
         files = sorted(glob.glob(pattern))
 
         if not files:
-            print(f"[AudioAnalyzer] No audio files found for session {session_id}")
             return SessionAnalysis(session_id=session_id)
 
-        print(f"[AudioAnalyzer] Found {len(files)} audio files for session {session_id}")
+        if files:
+            pass # Pattern match logic below
 
         # Run all analyses concurrently
         tasks = [
@@ -330,5 +326,4 @@ class AudioAnalyzer:
                 sum(r.speech_to_silence_ratio for r in valid) / len(valid), 1
             )
 
-        print(f"[AudioAnalyzer] Session {session_id} overall confidence: {analysis.overall_confidence}")
         return analysis

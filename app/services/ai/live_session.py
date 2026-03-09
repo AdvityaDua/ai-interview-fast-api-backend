@@ -63,7 +63,7 @@ class LiveInterviewSession:
                             await session.send(input=message.get("data"), end_of_turn=True)
                             
                 except Exception as e:
-                    print(f"Client Receive Error: {e}")
+                    pass
 
             # Task to receive from Gemini and send to WebSocket
             async def receive_from_gemini():
@@ -92,7 +92,7 @@ class LiveInterviewSession:
                                 await manager.send_json(websocket, {"type": "audio", "data": b64_audio})
 
                 except Exception as e:
-                    print(f"Gemini Receive Error: {e}")
+                    pass
 
             # Run both
             # send_task = asyncio.create_task(receive_from_client())
