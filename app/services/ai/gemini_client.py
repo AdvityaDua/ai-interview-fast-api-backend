@@ -162,11 +162,14 @@ class GeminiClient:
 
     async def generate_feedback(self, history: List[dict], context_summary: str) -> FinalEvaluation:
         prompt_history = "INTERVIEW HISTORY:\n"
+        user_msg_count = 0
         for turn in history:
             role = turn['role']
+            if role == 'user' or role == 'candidate':
+                user_msg_count += 1
             content = turn['content']
             prompt_history += f"{role.upper()}: {content}\n"
-
+            
         prompt = f"""
         You are an expert technical interviewer. The interview has ended.
         Provide a comprehensive final evaluation of the candidate.

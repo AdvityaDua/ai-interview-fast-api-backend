@@ -139,20 +139,16 @@ async def stream_interview_endpoint(
 ):
     """
     **Full-Duplex Interview Chat WebSocket**
-    Connect here with `?token=YOUR_JWT`.
-    Handles full bidirectional conversational state and feedback generation using Gemini.
-    Supports session restoration from Redis on reconnect.
-    Includes aggregated audio analysis metrics in the end-of-interview feedback.
     """
     user_id = user_payload.get("sub")
     await manager.connect(websocket, user_id)
+    print(f"[WS] Client {client_id} (User: {user_id}) connected.")
     
     try:
         session, restored = await manager.get_or_create_session(user_id)
-        client = session.client
         
         if restored and session.history:
-            # ── Session restored from cache — send history back to client ──
+            print(f"[WS] Restoring session for {user_id} with {len(session.history)} messages.")
             restored_messages = [
                 {"role": msg["role"], "content": msg["content"]}
                 for msg in session.history
@@ -166,10 +162,17 @@ async def stream_interview_endpoint(
             }, user_id)
         
         elif not session.history:
-            # ── Brand new session — wait for init payload ──
-            data = await websocket.receive_text()
-            init_payload = json.loads(data)
-            
+            print(f"[WS] Waiting for init payload from {user_id}...")
+            # We wrap this in a timeout to prevent hanging forever if client doesn't send init
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                init_payload = json.loads(data)
+            except asyncio.TimeoutError:
+                print(f"[WS] Timeout waiting for init from {user_id}")
+                await manager.send_json({"type": "error", "content": "Initialization timeout. Please try again."}, user_id)
+                await websocket.close()
+                return
+
             if init_payload.get("type") == "init":
                 resume_text = init_payload.get("resume_text", "")
                 jd_text = init_payload.get("jd_text", "")
@@ -178,56 +181,66 @@ async def stream_interview_endpoint(
                 company = init_payload.get("company", "")
                 duration = init_payload.get("duration", 0)
                 
-                await session.initialize_session(resume_text, jd_text, interview_type, role, company, duration)
-                await manager.send_json({"type": "info", "content": "Context initialized."}, user_id)
-                
-                # Save initial context to Redis
-                await manager.save_session_to_cache(user_id)
-                
-                await manager.send_json({"type": "stream_start"}, user_id)
-                async for chunk in session.stream_response(None):
-                    await manager.send_json({"type": "text", "content": chunk}, user_id)
-                await manager.send_json({"type": "stream_end"}, user_id)
-                
-                # Save after first AI response
-                await manager.save_session_to_cache(user_id)
+                print(f"[WS] Initializing context for {user_id} ({interview_type} round)...")
+                try:
+                    await manager.send_json({"type": "info", "content": "Analyzing resume & role..."}, user_id)
+                    await session.initialize_session(resume_text, jd_text, interview_type, role, company, duration)
+                    await manager.send_json({"type": "info", "content": "Context initialized."}, user_id)
+                    
+                    await manager.save_session_to_cache(user_id)
+                    
+                    print(f"[WS] Starting first AI response for {user_id}")
+                    await manager.send_json({"type": "stream_start"}, user_id)
+                    async for chunk in session.stream_response(None):
+                        await manager.send_json({"type": "text", "content": chunk}, user_id)
+                    await manager.send_json({"type": "stream_end"}, user_id)
+                    
+                    await manager.save_session_to_cache(user_id)
+                except Exception as e:
+                    print(f"[WS] Initialization error for {user_id}: {str(e)}")
+                    await manager.send_json({"type": "error", "content": f"AI Engine failed to initialize: {str(e)}"}, user_id)
+                    # We don't close yet, maybe they can retry? But usually init failure is fatal for the session.
             
+        # Main message loop
         while True:
             data = await websocket.receive_text()
             payload = json.loads(data)
             
             if payload.get("type") == "message":
                 user_text = payload.get("content")
+                print(f"[WS] Message from {user_id}: {user_text[:50]}...")
                 
-                await manager.send_json({"type": "stream_start"}, user_id)
-                async for chunk in session.stream_response(user_text):
-                     await manager.send_json({"type": "text", "content": chunk}, user_id)
-                await manager.send_json({"type": "stream_end"}, user_id)
-                
-                # Persist after every exchange
-                await manager.save_session_to_cache(user_id)
-                
-                if getattr(session, 'ended', False):
-                    await manager.send_json({"type": "info", "content": "Interview complete. Generating feedback..."}, user_id)
-                    feedback = await client.generate_feedback(session.history, session.context_summary)
+                try:
+                    await manager.send_json({"type": "stream_start"}, user_id)
+                    async for chunk in session.stream_response(user_text):
+                         await manager.send_json({"type": "text", "content": chunk}, user_id)
+                    await manager.send_json({"type": "stream_end"}, user_id)
                     
-                    # Include aggregated audio metrics
-                    audio_summary = _aggregate_audio_metrics(manager.get_audio_metrics(user_id))
+                    await manager.save_session_to_cache(user_id)
                     
-                    await manager.send_json({
-                        "type": "end_interview",
-                        "feedback": feedback.model_dump(),
-                        "audio_analysis": audio_summary,
-                    }, user_id)
-                    await manager.clear_session(user_id)
-                    break 
+                    if getattr(session, 'ended', False):
+                        await manager.send_json({"type": "info", "content": "Interview complete. Generating feedback..."}, user_id)
+                        feedback = await session.client.generate_feedback(session.history, session.context_summary)
+                        
+                        audio_summary = _aggregate_audio_metrics(manager.get_audio_metrics(user_id))
+                        
+                        await manager.send_json({
+                            "type": "end_interview",
+                            "feedback": feedback.model_dump(),
+                            "audio_analysis": audio_summary,
+                        }, user_id)
+                        await manager.clear_session(user_id)
+                        break 
+                except Exception as e:
+                    print(f"[WS] Error during response for {user_id}: {str(e)}")
+                    await manager.send_json({"type": "error", "content": f"AI Engine error: {str(e)}"}, user_id)
+                    await manager.send_json({"type": "stream_end"}, user_id)
             
             elif payload.get("type") == "end_session":
-                await manager.send_json({"type": "info", "content": "Ending session. Generating your interview analysis..."}, user_id)
+                print(f"[WS] Manual end session for {user_id}")
+                await manager.send_json({"type": "info", "content": "Ending session. Generating analysis..."}, user_id)
                 try:
-                    feedback = await client.generate_feedback(session.history, session.context_summary)
-                    
-                    # Include aggregated audio metrics
+                    feedback = await session.client.generate_feedback(session.history, session.context_summary)
                     audio_summary = _aggregate_audio_metrics(manager.get_audio_metrics(user_id))
                     
                     await manager.send_json({
@@ -236,6 +249,7 @@ async def stream_interview_endpoint(
                         "audio_analysis": audio_summary,
                     }, user_id)
                 except Exception as fb_err:
+                    print(f"[WS] Feedback generation error for {user_id}: {str(fb_err)}")
                     await manager.send_json({
                         "type": "end_interview",
                         "feedback": None,
@@ -245,10 +259,14 @@ async def stream_interview_endpoint(
                 await manager.clear_session(user_id)
                 break
 
+            elif payload.get("type") == "ping":
+                await manager.send_json({"type": "pong"}, user_id)
+
     except WebSocketDisconnect:
-        # Do NOT clear session on disconnect — Redis keeps it alive for reconnect
+        print(f"[WS] Client {client_id} disconnected.")
         manager.disconnect(user_id)
     except Exception as e:
+        print(f"[WS] Unexpected error in stream endpoint: {str(e)}")
         manager.disconnect(user_id)
         try:
             await websocket.close()
