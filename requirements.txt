@@ -27,3 +27,5 @@ marshmallow
 dataclasses-json
 cryptography
 certifi
+scikit-learn
+numpy
