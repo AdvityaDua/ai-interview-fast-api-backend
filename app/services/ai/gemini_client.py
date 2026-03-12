@@ -13,6 +13,7 @@ class GeminiClient:
             raise ValueError("GOOGLE_API_KEY not found in environment variables")
         
         self.client = genai.Client(api_key=api_key)
+        self.api_key = api_key
         self.model_name = model_name
 
     async def summarize_context(self, resume_text: str, jd_text: str, interview_type: str = "technical", role: str = "", company: str = "", candidate_name: str = "") -> str:
@@ -25,29 +26,31 @@ class GeminiClient:
 
         prompt = f"""
         You are an expert recruiter preparing for a {interview_type.upper()} interview round.
-        {f"The candidate's actual name is: {candidate_name}" if candidate_name else ""}
-        {f'The role is: {role}' if role else ''}
-        {f'The company is: {company}' if company else ''}
         
-        Analyze the following Resume and Job Description (JD). 
-        Create a dense, information-rich summary of under 2000 tokens.
+        TASK:
+        1. Extract the candidate's FULL NAME directly from the RESUME. If not found, use "{candidate_name or "the candidate"}".
+        2. Analyze the following Resume and Job Description (JD). 
+        3. Create a dense, information-rich summary for the interviewer.
         
-        {type_focus}
-        
-        Output in the following sections ONLY:
-        Candidate Name
-        Candidate Profile
-        Matched Skills
-        Missing Skills
-        Seniority Estimate
-        Key Projects
-        Interview Focus Areas (tailored for {interview_type} round)
-
         RESUME:
         {resume_text}
 
         JOB DESCRIPTION:
         {jd_text}
+        
+        {f'The role is: {role}' if role else ''}
+        {f'The company is: {company}' if company else ''}
+        
+        {type_focus}
+        
+        Output in the following sections ONLY:
+        IDENTIFIED NAME: [Strictly extract from resume]
+        Candidate Profile
+        Seniority Estimate
+        Matched Skills
+        Missing Skills
+        Key Projects and Experiences
+        Interview Focus Areas (tailored for {interview_type} round)
         """
         
         response = await asyncio.to_thread(
@@ -55,7 +58,15 @@ class GeminiClient:
             model=self.model_name,
             contents=prompt
         )
-        return response.text
+        
+        # Return both text and usage info
+        usage = {"input_tokens": 0, "output_tokens": 0}
+        if hasattr(response, 'usage_metadata'):
+            usage["input_tokens"] = getattr(response.usage_metadata, 'prompt_token_count', 0)
+            usage["output_tokens"] = getattr(response.usage_metadata, 'candidates_token_count', 0)
+            print(f"[GeminiClient] summarize_context usage: in={usage['input_tokens']}, out={usage['output_tokens']}")
+        
+        return response.text, usage
 
     async def generate_question(self, history: List[dict], context_summary: str, interview_type: str = "technical", time_context: str = "") -> QuestionEvaluation:
         prompt_history = "INTERVIEW HISTORY:\n"
@@ -216,7 +227,16 @@ class GeminiClient:
                 "response_schema": FinalEvaluation,
             },
         )
-        return FinalEvaluation.model_validate_json(response.text)
+        
+        # Track token usage for final feedback generation
+        usage = {"input_tokens": 0, "output_tokens": 0}
+        if hasattr(response, 'usage_metadata'):
+            usage["input_tokens"] = getattr(response.usage_metadata, 'prompt_token_count', 0)
+            usage["output_tokens"] = getattr(response.usage_metadata, 'candidates_token_count', 0)
+            print(f"[GeminiClient] generate_feedback usage: in={usage['input_tokens']}, out={usage['output_tokens']}")
+        
+        evaluation = FinalEvaluation.model_validate_json(response.text)
+        return evaluation, usage
 
     def connect_live(self, system_instruction: str):
         # Configuration aligning with user snippet where possible, while maintaining our features

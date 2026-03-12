@@ -52,6 +52,15 @@ class ConnectionManager:
             session.company = cached.get("company", "")
             session.start_time = cached.get("start_time", 0.0)
             session.duration_limit = cached.get("duration_limit", 0)
+            session.input_tokens = cached.get("input_tokens", 0)
+            session.output_tokens = cached.get("output_tokens", 0)
+            # Restore missing fields for the AI Graph
+            session.skills_remaining = cached.get("skills_remaining", [])
+            session.skills_covered = cached.get("skills_covered", [])
+            session.performance_summary = cached.get("performance_summary", "")
+            session.user_id = cached.get("user_id", user_id)
+            session.session_id = cached.get("session_id", "demo")
+            
             self.sessions[user_id] = session
             # Restore audio metrics from Redis too
             self.audio_metrics[user_id] = cached.get("audio_metrics", [])
@@ -88,6 +97,13 @@ class ConnectionManager:
             "company": session.company,
             "start_time": session.start_time,
             "duration_limit": session.duration_limit,
+            "input_tokens": session.input_tokens,
+            "output_tokens": session.output_tokens,
+            "skills_remaining": session.skills_remaining,
+            "skills_covered": session.skills_covered,
+            "performance_summary": session.performance_summary,
+            "user_id": session.user_id,
+            "session_id": session.session_id,
             "audio_metrics": self.audio_metrics.get(user_id, []),
         }
         await redis_cache.save_session(user_id, data)

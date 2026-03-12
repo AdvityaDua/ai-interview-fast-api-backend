@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str
     REDIS_URL: str = "redis://localhost:6379"
     PISTON_URL: str = "http://localhost:2000"
+    BACKEND_URL: str = "http://localhost:3000"
 
     class Config:
         env_file = ".env"

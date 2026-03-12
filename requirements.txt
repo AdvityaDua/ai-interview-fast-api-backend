@@ -29,3 +29,5 @@ cryptography
 certifi
 scikit-learn
 numpy
+langgraph
+langchain-google-genai

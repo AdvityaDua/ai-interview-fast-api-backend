@@ -8,6 +8,8 @@ from app.api.ws_manager import manager
 from app.api.ws_dependencies import get_ws_current_user
 from app.services.ai.stt_service import stt_service
 from app.services.ai.audio_analyzer import AudioAnalyzer
+from app.services.ai.gemini_client import GeminiClient
+from app.services.ai.streaming_session import StreamingInterviewSession
 
 ws_router = APIRouter()
 
@@ -239,6 +241,9 @@ async def stream_interview_endpoint(
                 return
 
             if init_payload.get("type") == "init":
+                # Clear any existing session to ensure fresh start with new resume
+                print(f"[WS] Clearing any existing session for {user_id} before new init")
+                await manager.clear_session(user_id)
                 resume_text = init_payload.get("resume_text", "")
                 resume_url  = init_payload.get("resume_url", "")
                 resume_path = init_payload.get("resume_path", "")  # raw relative path from MongoDB
@@ -305,9 +310,18 @@ async def stream_interview_endpoint(
 
                 print(f"[WS] ================================================")
                 print(f"[WS] Initializing context for {user_id} ({interview_type} round)...")
+                
+                # Create a fresh session for this new interview
+                client = GeminiClient()
+                session = StreamingInterviewSession(client)
+                manager.sessions[user_id] = session
+                manager.audio_metrics[user_id] = []
+                
                 try:
                     await manager.send_json({"type": "info", "content": "Analyzing resume & role..."}, user_id)
                     await session.initialize_session(
+                        user_id,
+                        client_id,
                         resume_text, 
                         jd_text, 
                         interview_type, 
@@ -365,7 +379,13 @@ async def stream_interview_endpoint(
                         await manager.send_json({"type": "info", "content": "Interview complete. Generating feedback..."}, user_id)
                         
                         try:
-                            feedback = await session.client.generate_feedback(session.history, session.context_summary)
+                            feedback, feedback_usage = await session.client.generate_feedback(session.history, session.context_summary)
+                            
+                            # Add feedback generation tokens to session
+                            session.input_tokens += feedback_usage.get("input_tokens", 0)
+                            session.output_tokens += feedback_usage.get("output_tokens", 0)
+                            print(f"[WS] Final tokens after feedback: in={session.input_tokens}, out={session.output_tokens}")
+                            
                             audio_summary = _aggregate_audio_metrics(manager.get_audio_metrics(user_id))
                             
                             await manager.send_json({
@@ -382,6 +402,9 @@ async def stream_interview_endpoint(
                                 "audio_analysis": _aggregate_audio_metrics(manager.get_audio_metrics(user_id)),
                             }, user_id)
                         
+                        # REPORT USAGE TO BACKEND
+                        asyncio.create_task(session.report_usage(user_id, client_id))
+
                         await manager.clear_session(user_id)
                         break 
                 except Exception as e:
@@ -412,7 +435,13 @@ async def stream_interview_endpoint(
 
                 await manager.send_json({"type": "info", "content": "Ending session. Generating analysis..."}, user_id)
                 try:
-                    feedback = await session.client.generate_feedback(session.history, session.context_summary)
+                    feedback, feedback_usage = await session.client.generate_feedback(session.history, session.context_summary)
+                    
+                    # Add feedback generation tokens to session
+                    session.input_tokens += feedback_usage.get("input_tokens", 0)
+                    session.output_tokens += feedback_usage.get("output_tokens", 0)
+                    print(f"[WS] Final tokens after feedback: in={session.input_tokens}, out={session.output_tokens}")
+                    
                     audio_summary = _aggregate_audio_metrics(manager.get_audio_metrics(user_id))
                     
                     await manager.send_json({
@@ -428,6 +457,10 @@ async def stream_interview_endpoint(
                         "audio_analysis": _aggregate_audio_metrics(manager.get_audio_metrics(user_id)),
                         "error": str(fb_err)
                     }, user_id)
+                
+                # REPORT USAGE TO BACKEND
+                asyncio.create_task(session.report_usage(user_id, client_id))
+
                 await manager.clear_session(user_id)
                 break
 
