@@ -15,7 +15,7 @@ class GeminiClient:
         self.client = genai.Client(api_key=api_key)
         self.model_name = model_name
 
-    async def summarize_context(self, resume_text: str, jd_text: str, interview_type: str = "technical", role: str = "", company: str = "") -> str:
+    async def summarize_context(self, resume_text: str, jd_text: str, interview_type: str = "technical", role: str = "", company: str = "", candidate_name: str = "") -> str:
         type_focus = {
             "technical": "Focus on: technical skills, programming languages, frameworks, system design experience, algorithms knowledge.",
             "behavioral": "Focus on: teamwork experiences, leadership examples, conflict resolution, communication skills, STAR-method scenarios.",
@@ -25,6 +25,7 @@ class GeminiClient:
 
         prompt = f"""
         You are an expert recruiter preparing for a {interview_type.upper()} interview round.
+        {f"The candidate's actual name is: {candidate_name}" if candidate_name else ""}
         {f'The role is: {role}' if role else ''}
         {f'The company is: {company}' if company else ''}
         
@@ -34,6 +35,7 @@ class GeminiClient:
         {type_focus}
         
         Output in the following sections ONLY:
+        Candidate Name
         Candidate Profile
         Matched Skills
         Missing Skills
@@ -135,11 +137,13 @@ class GeminiClient:
         3.  Generate the next question if continuing.
         
         RULES:
-        -   Start with a greeting and an initial question if the history is empty.
+        -   Start with a greeting and an initial question if the history is empty. IMPORTANT: In your very first message, you MUST greet the candidate by their actual name if it is available in the CONTEXT SUMMARY (e.g. "Hi [Name], thank you for joining...").
         -   Be professional, encouraging, but rigorous.
         -   If the candidate struggles, offer a small hint or move to a simpler related topic.
         -   If the candidate answers well, increase difficulty.
         -   Ensure coverage of key skills from the JD.
+        -   Set 'is_coding_question' in the 'next_step' to true if and only if the next question requires the candidate to write or modify code in the provided code editor. Otherwise, set it to false.
+
         
         OUTPUT FORMAT:
         You must return a JSON object strictly adhering to the schema.
@@ -170,6 +174,9 @@ class GeminiClient:
             content = turn['content']
             prompt_history += f"{role.upper()}: {content}\n"
             
+        if user_msg_count == 0:
+            raise ValueError("Insufficient Data: The candidate did not answer any questions during the interview. No meaningful evaluation can be generated.")
+            
         prompt = f"""
         You are an expert technical interviewer. The interview has ended.
         Provide a comprehensive final evaluation of the candidate.
@@ -180,11 +187,17 @@ class GeminiClient:
         {prompt_history}
         
         IMPORTANT INSTRUCTIONS:
+        - DO NOT MAKE UP OR HALLUCINATE ANY DATA. ONLY EVALUATE BASED ON THE ACTUAL CONVERSATION HISTORY. If the candidate answered very little, strictly mention that the candidate did not provide enough details, and score them accordingly.
         - You MUST include EVERY SINGLE question you asked during the interview as a separate entry in question_wise_analysis.
         - Do NOT consolidate or merge questions. Each question gets its own entry.
         - Number the question_ids sequentially starting from 1.
-        - The overall_score in summary should be out of 100.
+        - The overall_score in summary should be out of 100. IMPORTANT: Do NOT simply take the mathematical average of individual question scores.
+        - The overall_score should be a holistic assessment of the candidate's readiness for the role.
+        - Prioritize core technical skills and problem-solving over greetings or simple introductory questions.
+        - If the candidate performed exceptionally on difficult topics but missed minor points, the overall_score should reflect that high level of skill.
+        - Conversely, if the candidate failed core role requirements from the JD, the overall_score should reflect that lack of readiness, even if they answered other questions correctly.
         - Each individual question score should be out of 10.
+
         - For the IMPROVEMENT PLAN, you MUST provide:
             1. immediate_actions: Things to do in the next 24-48 hours.
             2. 1_week_plan: Focused study and practice for the next 7 days.

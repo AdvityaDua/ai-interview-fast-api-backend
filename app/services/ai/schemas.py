@@ -89,6 +89,7 @@ class NextStep(BaseModel):
     difficulty: Difficulty
     question: str
     target_skill: str
+    is_coding_question: bool = Field(False, description="Whether this question requires the candidate to write code in the editor.")
 
 class QuestionEvaluation(BaseModel):
     """Schema for the model's response after every user turn."""
