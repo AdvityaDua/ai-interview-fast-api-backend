@@ -41,8 +41,9 @@ class InterviewGraph:
             google_api_key=api_key,
             temperature=0.7,
         )
-        # Use structured LLM for turn logic
-        self.structured_llm = self.llm.with_structured_output(QuestionEvaluation)
+        # Use structured LLM for turn logic — include_raw=True so we keep the AIMessage
+        # and can read usage_metadata for accurate token counting
+        self.structured_llm = self.llm.with_structured_output(QuestionEvaluation, include_raw=True)
         self.graph = self._build_graph()
 
     def _build_graph(self):
@@ -94,26 +95,11 @@ class InterviewGraph:
                 remaining = [s for s in state['skills_remaining'] if s not in data.get("newly_covered", [])]
                 covered = state['skills_covered'] + data.get("newly_covered", [])
                 
-                # Capture Tokens - handle multiple possible formats
-                token_usage = {}
-                if hasattr(response, 'response_metadata'):
-                    token_usage = response.response_metadata.get("token_usage", {})
-                elif hasattr(response, 'usage_metadata'):
-                    token_usage = response.usage_metadata if isinstance(response.usage_metadata, dict) else {}
-                
-                # Extract with multiple fallback names
-                input_tokens = (
-                    token_usage.get("prompt_tokens") or 
-                    token_usage.get("input_tokens") or 
-                    token_usage.get("promptTokenCount") or 
-                    0
-                )
-                output_tokens = (
-                    token_usage.get("completion_tokens") or 
-                    token_usage.get("output_tokens") or 
-                    token_usage.get("candidatesTokenCount") or 
-                    0
-                )
+                # LangChain Google AI stores usage in response.usage_metadata as a dict
+                # with keys: input_tokens, output_tokens, total_tokens
+                usage_meta = getattr(response, 'usage_metadata', {}) or {}
+                input_tokens  = usage_meta.get('input_tokens', 0)
+                output_tokens = usage_meta.get('output_tokens', 0)
                 
                 print(f"[Graph] _update_summary tokens: in={input_tokens}, out={output_tokens}")
                 
@@ -163,28 +149,15 @@ class InterviewGraph:
         3. STRATEGY: If they are a senior, ask about architecture/trade-offs. If junior, focus on implementation.
         """
         
-        evaluation = await self.structured_llm.ainvoke(prompt)
+        # include_raw=True → returns {"raw": AIMessage, "parsed": QuestionEvaluation, "parsing_error": ...}
+        result     = await self.structured_llm.ainvoke(prompt)
+        evaluation = result["parsed"]
+        raw_msg    = result.get("raw")
         
-        # Capture Tokens - handle multiple possible formats
-        token_usage = {}
-        if hasattr(evaluation, 'usage_metadata'):
-            token_usage = evaluation.usage_metadata if isinstance(evaluation.usage_metadata, dict) else {}
-        elif hasattr(evaluation, 'response_metadata'):
-            token_usage = evaluation.response_metadata.get("token_usage", {})
-        
-        # Extract with multiple fallback names
-        input_tokens = (
-            token_usage.get("input_tokens") or 
-            token_usage.get("prompt_tokens") or 
-            token_usage.get("promptTokenCount") or 
-            0
-        )
-        output_tokens = (
-            token_usage.get("output_tokens") or 
-            token_usage.get("completion_tokens") or 
-            token_usage.get("candidatesTokenCount") or 
-            0
-        )
+        # LangChain Google AI stores usage in AIMessage.usage_metadata
+        usage_meta    = getattr(raw_msg, 'usage_metadata', {}) or {}
+        input_tokens  = usage_meta.get('input_tokens', 0)
+        output_tokens = usage_meta.get('output_tokens', 0)
         
         print(f"[Graph] _produce_question tokens: in={input_tokens}, out={output_tokens}, total_so_far={state.get('input_tokens', 0) + input_tokens + state.get('output_tokens', 0) + output_tokens}")
         

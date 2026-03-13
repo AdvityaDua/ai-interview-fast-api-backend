@@ -16,6 +16,19 @@ class LLMScorer:
         self.model = model
         self.temperature = temperature
         self.timeout = timeout
+        # Cumulative token counters — reset per upload request
+        self.total_input_tokens  = 0
+        self.total_output_tokens = 0
+
+    def reset_usage(self) -> None:
+        self.total_input_tokens  = 0
+        self.total_output_tokens = 0
+
+    def get_usage(self) -> dict:
+        return {
+            "input_tokens":  self.total_input_tokens,
+            "output_tokens": self.total_output_tokens,
+        }
 
     # ---------- CV vs JD (auto-switch) ----------
     def unified_evaluate(self, cv_text: str, jd_text: str = "") -> dict:
@@ -45,6 +58,11 @@ class LLMScorer:
                     temperature=self.temperature,
                     max_tokens=3500,
                 )
+                # Accumulate Groq token usage
+                if hasattr(resp, 'usage') and resp.usage:
+                    self.total_input_tokens  += getattr(resp.usage, 'prompt_tokens',     0)
+                    self.total_output_tokens += getattr(resp.usage, 'completion_tokens', 0)
+                    print(f"[CV-Eval] Groq call tokens: in={resp.usage.prompt_tokens}, out={resp.usage.completion_tokens}  cumulative: in={self.total_input_tokens}, out={self.total_output_tokens}")
                 return resp.choices[0].message.content.strip()
             except Exception as e:
                 logger.error(f"Groq API call failed (attempt {attempt+1}/3): {e}")

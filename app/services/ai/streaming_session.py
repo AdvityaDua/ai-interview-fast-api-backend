@@ -237,7 +237,11 @@ class StreamingInterviewSession:
             "outputTokens": self.output_tokens,
             "totalTokens": self.input_tokens + self.output_tokens,
             "costUsd": total_cost,
-            "subscriptionStatus": "free" # Default, backend will refine if needed
+            "subscriptionStatus": "free",  # Backend will refine from user DB
+            "source": "interview",
+            "interviewType": self.state.get("interview_type", ""),
+            "role": self.state.get("role", ""),
+            "company": self.state.get("company", ""),
         }
 
         try:
@@ -247,6 +251,6 @@ class StreamingInterviewSession:
                     json=usage_data,
                     timeout=5.0
                 )
-            print(f"[AI] Usage reported: {self.input_tokens + self.output_tokens} tokens for {user_id}")
+            print(f"[AI] Usage reported: in={self.input_tokens}, out={self.output_tokens}, total={self.input_tokens + self.output_tokens} tokens for user {user_id} ({self.state.get('interview_type', '')})")
         except Exception as e:
             print(f"[AI] Failed to report usage: {str(e)}")

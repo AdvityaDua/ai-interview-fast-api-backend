@@ -1,16 +1,74 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-import shutil, tempfile, os
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
+import shutil, tempfile, os, uuid
+import httpx
 import pdfplumber
 from docx import Document
 from bs4 import BeautifulSoup
 from PIL import Image
 import pytesseract
 
+from app.core.config import settings
+from app.core.security import verify_jwt_token
 from app.services.cv_eval.evaluation_engine import evaluation_engine
 from app.services.cv_eval.improvement_engine import Improvement
 
 
 router = APIRouter()
+
+# -----------------------
+# Analytics helper
+# -----------------------
+
+async def _report_cv_token_usage(request: Request, usage: dict, source: str = "cv") -> None:
+    """Extract user from JWT in Authorization header and POST token usage to analytics."""
+    input_tokens  = usage.get("input_tokens", 0)
+    output_tokens = usage.get("output_tokens", 0)
+    if input_tokens == 0 and output_tokens == 0:
+        print(f"[CV-Upload] No tokens to report — skipping analytics POST.")
+        return
+
+    # Try to extract user_id from the forwarded Authorization header
+    user_id = "anonymous"
+    try:
+        state = request.scope.get("state", {})
+        user  = state.get("user") if isinstance(state, dict) else getattr(state, "user", None)
+        if user:
+            user_id = str(user.get("sub") or user.get("_id") or user.get("id", "anonymous"))
+        else:
+            # Fallback: decode JWT directly from header
+            auth = request.headers.get("authorization", "")
+            if auth.startswith("Bearer "):
+                payload = verify_jwt_token(auth.split(" ", 1)[1])
+                user_id = str(payload.get("sub", "anonymous"))
+    except Exception:
+        pass
+
+    in_cost  = (input_tokens  / 1_000_000) * 0.05   # Groq llama-3.1-8b pricing
+    out_cost = (output_tokens / 1_000_000) * 0.08
+    session_id = f"{source}_{user_id}_{uuid.uuid4().hex[:10]}"
+    payload = {
+        "userId":             user_id,
+        "sessionId":          session_id,
+        "model":              "llama-3.1-8b-instant",
+        "inputTokens":        input_tokens,
+        "outputTokens":       output_tokens,
+        "totalTokens":        input_tokens + output_tokens,
+        "costUsd":            in_cost + out_cost,
+        "subscriptionStatus": "free",
+        "source":             source,
+        "interviewType":      "",
+    }
+    print(f"[CV-Upload] Reporting {source} usage to analytics: in={input_tokens}, out={output_tokens}, user={user_id}")
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                f"{settings.BACKEND_URL}/analytics/ai-usage",
+                json=payload,
+                timeout=5.0,
+            )
+        print(f"[CV-Upload] analytics POST status={r.status_code}")
+    except Exception as e:
+        print(f"[CV-Upload] Failed to report usage: {type(e).__name__}: {e}")
 
 # -----------------------
 # Helpers
@@ -164,22 +222,30 @@ def save_and_extract(upload: UploadFile) -> str:
 
 @router.post("/cv_evaluate")
 async def upload_and_evaluate_cv(
+    request: Request,
     file: UploadFile = File(...),
     jd_text: str = Form("", description="Optional JD text"),
     jd_file: UploadFile = File(None)
 ):
     """Upload CV (PDF/DOC/DOCX) and optionally JD for evaluation."""
     try:
+        # Reset token counter for this request
+        evaluation_engine.llm_scorer.reset_usage()
+
         cv_text = save_and_extract(file)
 
         if jd_text and jd_text.strip():
-            return evaluation_engine.evaluate(cv_text, jd_text)
-
-        if jd_file is not None:
+            result = evaluation_engine.evaluate(cv_text, jd_text)
+        elif jd_file is not None:
             jd_extracted = save_and_extract(jd_file)
-            return evaluation_engine.evaluate(cv_text, jd_extracted)
+            result = evaluation_engine.evaluate(cv_text, jd_extracted)
+        else:
+            result = evaluation_engine.evaluate(cv_text)
 
-        return evaluation_engine.evaluate(cv_text)
+        # Report token usage to analytics
+        usage = evaluation_engine.llm_scorer.get_usage()
+        await _report_cv_token_usage(request, usage, source="cv")
+        return result
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Evaluation failed: {str(e)}")
@@ -194,23 +260,30 @@ improvement_engine = Improvement()
 
 @router.post("/cv_improvement")
 async def upload_and_improve_cv(
+    request: Request,
     file: UploadFile = File(...),
     jd_text: str = Form("", description="JD text (optional)"),
     jd_file: UploadFile = File(None)
 ):
     """Upload CV and optionally JD → generate improved resume, benchmark, and cover letter."""
     try:
+        # Reset token counter for this request
+        improvement_engine.llm_scorer.reset_usage()
+
         cv_text = save_and_extract(file)
 
         if jd_text and jd_text.strip():
-            return improvement_engine.evaluate(cv_text, jd_text)
-
-        if jd_file is not None:
+            result = improvement_engine.evaluate(cv_text, jd_text)
+        elif jd_file is not None:
             jd_extracted = save_and_extract(jd_file)
-            return improvement_engine.evaluate(cv_text, jd_extracted)
+            result = improvement_engine.evaluate(cv_text, jd_extracted)
+        else:
+            result = improvement_engine.evaluate(cv_text, "")
 
-        # Fallback to generic JD-less improvement
-        return improvement_engine.evaluate(cv_text, "")
+        # Report token usage to analytics
+        usage = improvement_engine.llm_scorer.get_usage()
+        await _report_cv_token_usage(request, usage, source="cv")
+        return result
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Improvement failed: {str(e)}")
