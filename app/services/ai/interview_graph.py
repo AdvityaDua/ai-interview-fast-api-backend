@@ -311,8 +311,27 @@ Original question to re-state: {last_q[:400]}
 """
         elif answer_type == "confused":
             last_q = state.get("current_question", "")
-            routing_block = f"""
+            if consecutive_non >= 2:
+                # Already rephrased once — candidate still doesn't get it. Move on.
+                routing_block = f"""
+⏭ CANDIDATE IS STILL CONFUSED after you already rephrased the question once.
+Do NOT rephrase again. Move to a completely different question.
+
+YOU MUST:
+  1. One short empathetic sentence (e.g. "No worries, let's move on!").
+  2. Ask a BRAND NEW question on a DIFFERENT topic from the candidate's skills in CANDIDATE CONTEXT.
+     Pick something from SKILLS REMAINING that has NOT been asked yet.
+  3. The new question must be clear and concrete — one sentence, plain language.
+  4. action remains CONTINUE.
+  5. Do NOT reference the previous question at all.
+
+Previous question you must NOT rephrase again: "{last_q[:200]}"
+"""
+            else:
+                # First time confused — rephrase once, same topic.
+                routing_block = f"""
 🔄 CANDIDATE DID NOT UNDERSTAND THE QUESTION. They asked you to explain or simplify it.
+This is your ONE chance to rephrase — after this, if they are still confused you will move on.
 
 YOU MUST FOLLOW THESE RULES — NO EXCEPTIONS:
 
@@ -498,6 +517,10 @@ INSTRUCTIONS:
             + (1 if evaluation.next_step.is_coding_question else 0)
         )
 
+        # Reset confusion streak when we've just moved on to a new question
+        # so the candidate gets a fresh rephrase attempt on the next topic.
+        moved_on_from_confusion = (answer_type == "confused" and consecutive_non >= 2)
+
         return {
             "current_evaluation": evaluation,
             "history": new_history,
@@ -507,6 +530,7 @@ INSTRUCTIONS:
             "coding_questions_asked": new_coding_count,
             "turn_number": turn_number + 1,
             "follow_up_hint": "",
+            "consecutive_non_answers": 0 if moved_on_from_confusion else consecutive_non,
             "input_tokens": state.get("input_tokens", 0) + in_tok,
             "output_tokens": state.get("output_tokens", 0) + out_tok,
         }
