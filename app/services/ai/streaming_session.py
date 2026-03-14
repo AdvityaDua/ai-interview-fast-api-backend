@@ -246,11 +246,12 @@ class StreamingInterviewSession:
 
         try:
             async with httpx.AsyncClient() as client:
-                await client.post(
+                response = await client.post(
                     f"{settings.BACKEND_URL}/analytics/ai-usage",
                     json=usage_data,
                     timeout=5.0
                 )
+                response.raise_for_status()
             print(f"[AI] Usage reported: in={self.input_tokens}, out={self.output_tokens}, total={self.input_tokens + self.output_tokens} tokens for user {user_id} ({self.state.get('interview_type', '')})")
         except Exception as e:
             print(f"[AI] Failed to report usage: {str(e)}")
