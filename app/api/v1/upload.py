@@ -1,5 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 import shutil, tempfile, os, uuid
+from typing import Optional
 import httpx
 import pdfplumber
 from docx import Document
@@ -74,18 +75,21 @@ async def _report_cv_token_usage(request: Request, usage: dict, source: str = "c
 # Helpers
 # -----------------------
 
-def extract_text_from_pdf(file_path: str) -> str:
-    """Extract text from PDF using pdfplumber with a 7-page limit."""
+def extract_text_from_pdf(file_path: str, max_pages: int = 7) -> str:
+    """Extract text from PDF using pdfplumber with a configurable page limit."""
     text = ""
     try:
         with pdfplumber.open(file_path) as pdf:
-            if len(pdf.pages) > 7:
-                raise ValueError(f"Resume exceeds maximum allowed length of 7 pages (found {len(pdf.pages)} pages).")
-            
+            actual_pages = len(pdf.pages)
+            if actual_pages > max_pages:
+                raise ValueError(
+                    f"Resume has {actual_pages} pages which exceeds the {max_pages}-page limit for your plan. "
+                    f"Please trim your resume or upgrade to a plan that supports up to 20 pages."
+                )
             for page in pdf.pages:
                 text += (page.extract_text() or "") + "\n"
     except Exception as e:
-        if "maximum allowed length" in str(e):
+        if "page limit" in str(e) or "exceeds the" in str(e):
             raise
         # Fallback or other errors
         raise RuntimeError(f"Failed to extract PDF: {str(e)}")
@@ -167,11 +171,11 @@ def extract_text_from_image(file_path: str) -> str:
         raise RuntimeError(f"Failed to extract text from image: {e}")
 
 
-def extract_text(file_path: str) -> str:
+def extract_text(file_path: str, max_pages: int = 7) -> str:
     """Dispatch extractor based on file extension."""
     ext = os.path.splitext(file_path)[1].lower()
     if ext == ".pdf":
-        return extract_text_from_pdf(file_path)
+        return extract_text_from_pdf(file_path, max_pages=max_pages)
     elif ext == ".docx":
         return extract_text_from_docx(file_path)
     elif ext == ".doc":
@@ -192,25 +196,23 @@ def extract_text(file_path: str) -> str:
         raise ValueError(f"Unsupported file format: {ext}")
 
 
-def save_and_extract(upload: UploadFile) -> str:
-    """Temporarily save uploaded file, extract its text, and enforce optimizations."""
+def save_and_extract(upload: UploadFile, max_pages: int = 7) -> str:
+    """Temporarily save uploaded file, extract its text, and enforce plan-based limits."""
     with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(upload.filename)[1]) as tmp:
         shutil.copyfileobj(upload.file, tmp)
         tmp_path = tmp.name
     try:
-        text = extract_text(tmp_path)
+        text = extract_text(tmp_path, max_pages=max_pages)
         
-        # Optimization: Enforce reasonable character limit for processing (around 7 dense pages)
-        # 1 page is roughly 3000-4000 chars. 7 pages = ~25,000 chars.
-        MAX_CHARS = 30000 
-        if len(text) > MAX_CHARS:
-            # We don't necessarily want to fail here if it's just text, 
-            # but for optimization, we could trim or warn.
-            # However, the user said "except resume of 7 pages at max", 
-            # so for non-PDFs where we can't count pages accurately, 30k chars is a safe limit.
-            if not upload.filename.lower().endswith('.pdf'):
-                raise ValueError(f"Extracted content exceeds the equivalent of 7 pages (~{MAX_CHARS} characters).")
-            
+        # Char-based overflow guard for non-PDF formats (can't count pages accurately)
+        # 1 page ≈ 3000-4000 chars; free=7 pages≈21000 chars, paid=20 pages≈60000 chars
+        MAX_CHARS = max_pages * 3500
+        if len(text) > MAX_CHARS and not upload.filename.lower().endswith('.pdf'):
+            raise ValueError(
+                f"Extracted content exceeds the {max_pages}-page limit for your plan "
+                f"(~{MAX_CHARS:,} characters allowed; your document has ~{len(text):,}). "
+                f"Please trim your document or upgrade your plan."
+            )
     finally:
         os.remove(tmp_path)
     return text
@@ -225,19 +227,20 @@ async def upload_and_evaluate_cv(
     request: Request,
     file: UploadFile = File(...),
     jd_text: str = Form("", description="Optional JD text"),
-    jd_file: UploadFile = File(None)
+    jd_file: UploadFile = File(None),
+    max_pages: int = Form(7, description="Max pages allowed (7=free, 20=premium)")
 ):
     """Upload CV (PDF/DOC/DOCX) and optionally JD for evaluation."""
     try:
         # Reset token counter for this request
         evaluation_engine.llm_scorer.reset_usage()
 
-        cv_text = save_and_extract(file)
+        cv_text = save_and_extract(file, max_pages=max_pages)
 
         if jd_text and jd_text.strip():
             result = evaluation_engine.evaluate(cv_text, jd_text)
         elif jd_file is not None:
-            jd_extracted = save_and_extract(jd_file)
+            jd_extracted = save_and_extract(jd_file, max_pages=max_pages)
             result = evaluation_engine.evaluate(cv_text, jd_extracted)
         else:
             result = evaluation_engine.evaluate(cv_text)
@@ -247,6 +250,8 @@ async def upload_and_evaluate_cv(
         await _report_cv_token_usage(request, usage, source="cv")
         return result
 
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Evaluation failed: {str(e)}")
 
@@ -263,19 +268,20 @@ async def upload_and_improve_cv(
     request: Request,
     file: UploadFile = File(...),
     jd_text: str = Form("", description="JD text (optional)"),
-    jd_file: UploadFile = File(None)
+    jd_file: UploadFile = File(None),
+    max_pages: int = Form(7, description="Max pages allowed (7=free, 20=premium)")
 ):
     """Upload CV and optionally JD → generate improved resume, benchmark, and cover letter."""
     try:
         # Reset token counter for this request
         improvement_engine.llm_scorer.reset_usage()
 
-        cv_text = save_and_extract(file)
+        cv_text = save_and_extract(file, max_pages=max_pages)
 
         if jd_text and jd_text.strip():
             result = improvement_engine.evaluate(cv_text, jd_text)
         elif jd_file is not None:
-            jd_extracted = save_and_extract(jd_file)
+            jd_extracted = save_and_extract(jd_file, max_pages=max_pages)
             result = improvement_engine.evaluate(cv_text, jd_extracted)
         else:
             result = improvement_engine.evaluate(cv_text, "")
@@ -285,5 +291,7 @@ async def upload_and_improve_cv(
         await _report_cv_token_usage(request, usage, source="cv")
         return result
 
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Improvement failed: {str(e)}")
