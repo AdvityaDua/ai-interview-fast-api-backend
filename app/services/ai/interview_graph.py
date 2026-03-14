@@ -47,9 +47,28 @@ class InterviewState(TypedDict):
     # Control
     ended: bool
 
+    # Question budget (0 = no limit)
+    max_questions: int
+
     # Token accounting
     input_tokens: int
     output_tokens: int
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Question budget by duration
+# ─────────────────────────────────────────────────────────────────────────────
+def _max_questions_for_duration(duration_minutes: int) -> int:
+    """Return the maximum number of questions for a given interview duration."""
+    if duration_minutes <= 0:
+        return 0        # unlimited
+    if duration_minutes <= 15:
+        return 10       # 15 min  → up to 10 questions
+    if duration_minutes <= 30:
+        return 18       # 30 min  → up to 18 questions
+    if duration_minutes <= 45:
+        return 25       # 45 min  → up to 25 questions
+    return 30           # 60 min  → up to 30 questions
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -286,6 +305,35 @@ STEP 5 — follow_up_hint: specific gap to probe IF should_follow_up is true. Em
                 f"\n⛔ ALREADY ASKED — DO NOT REPEAT OR REPHRASE ANY OF THESE:\n{asked_summary}"
             )
 
+        # ── Question budget enforcement ──
+        max_q = state.get("max_questions", 0)
+        question_limit_block = ""
+        if max_q > 0:
+            questions_used = len(questions_asked)   # = number of questions so far
+            questions_left = max_q - questions_used
+            if questions_left <= 0:
+                # Hard limit reached — force END immediately
+                question_limit_block = f"""
+⏰ QUESTION LIMIT REACHED: This interview was allocated a maximum of {max_q} questions and all have been used.
+You MUST:
+  1. Wrap up warmly in one sentence.
+  2. Give a brief summary of how the interview went.
+  3. Set action=END — this overrides all other instructions.
+  4. Do NOT ask any new question.
+"""
+            elif questions_left == 1:
+                question_limit_block = f"""
+⚠ FINAL QUESTION: This is question {questions_used + 1} of {max_q} (the last one).
+  - Ask the single most important unanswered question remaining.
+  - After the candidate answers, you will wrap up — do NOT plan follow-ups.
+"""
+            elif questions_left == 2:
+                question_limit_block = f"""
+⚠ APPROACHING LIMIT: {questions_left} questions remaining out of {max_q} total.
+  - Prioritise the highest-value uncovered topics.
+  - Start steering toward a natural close.
+"""
+
         # ── Response-type routing (core new logic) ──
         routing_block = ""
         if answer_type == "end_requested":
@@ -452,7 +500,7 @@ CANDIDATE CONTEXT (resume + JD summary):
 Role: {state.get('role', 'Not specified')} | Company: {state.get('company', 'Not specified')}
 {'═' * 60}
 
-INTERVIEW PROGRESS — Turn {turn_number + 1}:
+INTERVIEW PROGRESS — Turn {turn_number + 1}{f' of {max_q}' if max_q > 0 else ''}:
 • Skills covered  : {', '.join(state['skills_covered']) if state['skills_covered'] else 'None yet'}
 • Skills remaining: {', '.join(state['skills_remaining'][:10]) if state['skills_remaining'] else 'All covered — deepen existing topics'}
 • Difficulty      : {difficulty_hint}
@@ -466,6 +514,7 @@ TIME: {state['time_context'] or 'No time limit.'}
 RECENT CONVERSATION:
 {recent_text}
 {'═' * 60}
+{question_limit_block}
 {routing_block}
 {follow_up_block}
 {anti_repeat_block}
@@ -517,6 +566,11 @@ INSTRUCTIONS:
             + (1 if evaluation.next_step.is_coding_question else 0)
         )
 
+        # Hard-force END if question budget is exhausted (belt + suspenders)
+        max_q = state.get("max_questions", 0)
+        questions_used = len(new_questions_asked)
+        budget_exhausted = max_q > 0 and questions_used > max_q
+
         # Reset confusion streak when we've just moved on to a new question
         # so the candidate gets a fresh rephrase attempt on the next topic.
         moved_on_from_confusion = (answer_type == "confused" and consecutive_non >= 2)
@@ -524,7 +578,7 @@ INSTRUCTIONS:
         return {
             "current_evaluation": evaluation,
             "history": new_history,
-            "ended": evaluation.decision.action == Action.END,
+            "ended": evaluation.decision.action == Action.END or budget_exhausted,
             "current_question": evaluation.next_step.question,
             "questions_asked": new_questions_asked,
             "coding_questions_asked": new_coding_count,

@@ -4,7 +4,7 @@ import httpx
 from typing import List, Dict, Any, Optional
 from app.core.config import settings
 from .gemini_client import GeminiClient
-from .interview_graph import InterviewGraph, InterviewState
+from .interview_graph import InterviewGraph, InterviewState, _max_questions_for_duration
 from .schemas import Action
 
 class StreamingInterviewSession:
@@ -31,11 +31,12 @@ class StreamingInterviewSession:
             "turn_number": 0,
             "last_answer_type": "not_applicable",
             "consecutive_non_answers": 0,
+            "max_questions": 0,
             "input_tokens": 0,
             "output_tokens": 0,
         }
         self.start_time: float = 0.0
-        self.duration_limit: int = 0 
+        self.duration_limit: int = 0
 
     @property
     def history(self):
@@ -144,6 +145,8 @@ class StreamingInterviewSession:
     async def initialize_session(self, user_id: str, session_id: str, resume_text: str, jd_text: str, interview_type: str = "technical", role: str = "", company: str = "", duration: int = 0, candidate_name: str = ""):
         self.start_time = time.time()
         self.duration_limit = duration
+        max_q = _max_questions_for_duration(duration)
+        print(f"[Session] duration={duration}min → max_questions={max_q}")
         
         # Static context summarization - now returns usage info too
         context, context_usage = await self.client.summarize_context(resume_text, jd_text, interview_type, role, company, candidate_name)
@@ -215,6 +218,7 @@ class StreamingInterviewSession:
             "turn_number": 0,
             "last_answer_type": "not_applicable",
             "consecutive_non_answers": 0,
+            "max_questions": max_q,
             "input_tokens": init_input_tokens,
             "output_tokens": init_output_tokens,
         })
