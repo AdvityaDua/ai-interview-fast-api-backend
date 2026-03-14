@@ -166,8 +166,16 @@ INTERVIEWER ASKED: {last_question}
 CANDIDATE RESPONDED: {state['last_user_input']}
 ─────────────────────
 
-STEP 1 — Classify answer_type FIRST (this drives the entire strategy):  end_requested    — candidate explicitly asked to stop, end, quit, leave, or said they are no longer interested in the interview — CHECK THIS FIRST  genuine_answer   — candidate actually attempted the question
-  confused         — candidate said they don’t understand, asked for clarification, or said the question is unclear
+STEP 1 — Classify answer_type FIRST (this drives the entire strategy):
+  end_requested    — candidate explicitly asked to stop, end, quit, leave, or said they are no longer interested in the interview — CHECK THIS FIRST
+  wait_requested   — candidate explicitly asked for a moment to think, or said "give me a second", "one moment", "let me think"
+  confused         — candidate said they don't understand, asked for clarification, asked you to explain / rephrase / simplify,
+                     or said the question is unclear. SPECIFIC EXAMPLES that MUST be classified as confused:
+                       "I didn't get your question", "can you explain in simple language", "please repeat",
+                       "what do you mean", "I don't understand", "can you rephrase", "can you simplify",
+                       "explain this to me", "I'm not sure what you're asking", "please clarify".
+                     ANY request for the question to be explained differently = confused.
+  genuine_answer   — candidate actually attempted the question (even partially)
   refused          — candidate explicitly said they don’t want to answer, or tried to avoid the topic
   off_topic        — candidate talked about something unrelated to what was asked
   incomplete       — candidate started answering but stopped or gave only a fragment
@@ -304,19 +312,37 @@ Original question to re-state: {last_q[:400]}
         elif answer_type == "confused":
             last_q = state.get("current_question", "")
             routing_block = f"""
-🔄 CANDIDATE WAS CONFUSED by the last question. Follow this EXACT strategy:
-  1. ONE brief acknowledgement sentence (e.g. "No problem!").
-  2. Strip the original question down to its SINGLE most important sub-question.
-     — Remove ALL secondary parts, sub-parts, and follow-ons.
-     — Rewrite it as a SHORT, direct sentence (15 words max if possible).
-     — Ground it in a CONCRETE example using the candidate's own stack/projects.
-     — Example transform:
-         BAD (original):  "Explain React's virtual DOM AND how it influenced your project AND write a component..."
-         GOOD (rephrased): "In your ASL project, why did you choose React over plain JS for the UI?"
-  3. If the question had a coding part, DROP the coding part for now — ask it verbally first.
-  4. Do NOT ask anything new. Do NOT add "also" or "additionally".
-  5. action must remain CONTINUE.
-Original question to simplify: {last_q[:300]}
+🔄 CANDIDATE DID NOT UNDERSTAND THE QUESTION. They asked you to explain or simplify it.
+
+YOU MUST FOLLOW THESE RULES — NO EXCEPTIONS:
+
+  RULE 1 — SAME TOPIC, SIMPLER WORDS:
+    Your rephrased question MUST be about the EXACT SAME TOPIC as the original.
+    The original question was about: "{last_q[:200]}"
+    You are NOT allowed to switch to a different topic, a different skill, or a different project.
+    If the original asked about Python, your rephrased question must also be about Python.
+    If the original asked about a specific project, stay on that project.
+
+  RULE 2 — ONE SENTENCE, PLAIN LANGUAGE:
+    Rewrite it as ONE short, concrete question a non-technical person could understand.
+    Remove jargon. Remove sub-parts. Remove "and also". Max 20 words.
+    Ground it in a real, specific example (e.g. "In your [project], why did you choose X?").
+
+  RULE 3 — DROP CODING FOR NOW:
+    If the original had a coding task, remove it. Ask the concept verbally first.
+
+  RULE 4 — DO NOT ADD ANYTHING ELSE:
+    Start with one acknowledgement sentence ("Sure!", "Of course!", "No problem!").
+    Then ask ONLY the rephrased question. Nothing after it.
+    action must remain CONTINUE.
+
+  SELF-CHECK before finalising your response:
+    ✓ Is my rephrased question about the same topic as the original? (If NO → rewrite it)
+    ✓ Does it have only one question mark? (If NO → remove extras)
+    ✓ Is it shorter and simpler than the original? (If NO → simplify further)
+
+  Original question to simplify (DO NOT change the subject):
+  "{last_q[:400]}"
 """
         elif answer_type == "refused":
             routing_block = """
