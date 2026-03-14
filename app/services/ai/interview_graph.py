@@ -54,6 +54,9 @@ class InterviewState(TypedDict):
     max_questions_per_topic: int
     topic_question_counts: Dict[str, int]   # skill → #times asked
 
+    # How many times to rephrase a confused question before moving on
+    max_confusion_retries: int
+
     # Token accounting
     input_tokens: int
     output_tokens: int
@@ -86,6 +89,15 @@ def _max_questions_per_topic(duration_minutes: int) -> int:
     if duration_minutes <= 45:
         return 2        # 45 min → max 2 per topic
     return 3            # 60 min → max 3 per topic
+
+
+def _max_confusion_retries_for_duration(duration_minutes: int) -> int:
+    """How many times the interviewer will rephrase a confused question before moving on."""
+    if duration_minutes <= 0:
+        return 2        # no limit → be patient
+    if duration_minutes <= 15:
+        return 1        # 15 min: rephrase once then move on
+    return 2            # 30 / 45 / 60 min: rephrase twice then move on
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -400,21 +412,36 @@ Original question to re-state: {last_q[:400]}
 """
         elif answer_type == "confused":
             last_q = state.get("current_question", "")
-            if consecutive_non >= 2:
-                # Already rephrased once — candidate still doesn't get it. Move on.
+            max_retries = state.get("max_confusion_retries", 1)
+
+            if consecutive_non >= max_retries + 1:
+                # Exhausted all rephrases — move on.
                 routing_block = f"""
-⏭ CANDIDATE IS STILL CONFUSED after you already rephrased the question once.
-Do NOT rephrase again. Move to a completely different question.
+⏭ CANDIDATE IS STILL CONFUSED after {max_retries} rephrase attempt(s). Move to a new topic now.
 
 YOU MUST:
-  1. One short empathetic sentence (e.g. "No worries, let's move on!").
-  2. Ask a BRAND NEW question on a DIFFERENT topic from the candidate's skills in CANDIDATE CONTEXT.
-     Pick something from SKILLS REMAINING that has NOT been asked yet.
-  3. The new question must be clear and concrete — one sentence, plain language.
-  4. action remains CONTINUE.
-  5. Do NOT reference the previous question at all.
+  1. One short empathetic sentence (e.g. "No worries, let’s move on!").
+  2. Ask a BRAND NEW question on a DIFFERENT skill/topic from SKILLS REMAINING.
+  3. The new question must be clear, concrete, one sentence.
+  4. action remains CONTINUE. Do NOT reference the previous question.
 
 Previous question you must NOT rephrase again: "{last_q[:200]}"
+"""
+            elif consecutive_non >= 2:
+                # Second rephrase (30+ min interviews with max_retries == 2)
+                routing_block = f"""
+🔄 SECOND ATTEMPT: Candidate is still confused. Rephrase once more, even simpler.
+This is your LAST rephrase — if they are confused again after this, you will move on.
+
+YOU MUST:
+  1. One warm sentence (e.g. "Let me try once more!").
+  2. Strip the question to its absolute core — a SINGLE plain-English sentence, max 12 words.
+     — No technical terms. Use an everyday analogy if needed.
+     — Example: "In your project, which Python package did you use the most?"
+  3. SAME topic as the original — do NOT switch subjects.
+  4. action remains CONTINUE.
+
+Original question to simplify further: "{last_q[:300]}"
 """
             else:
                 # First time confused — rephrase once, same topic.
@@ -613,9 +640,9 @@ INSTRUCTIONS:
         questions_used = len(new_questions_asked)
         budget_exhausted = max_q > 0 and questions_used > max_q
 
-        # Reset confusion streak when we've just moved on to a new question
-        # so the candidate gets a fresh rephrase attempt on the next topic.
-        moved_on_from_confusion = (answer_type == "confused" and consecutive_non >= 2)
+        # Reset confusion streak when we've moved on to a new question
+        max_retries = state.get("max_confusion_retries", 1)
+        moved_on_from_confusion = (answer_type == "confused" and consecutive_non >= max_retries + 1)
 
         return {
             "current_evaluation": evaluation,

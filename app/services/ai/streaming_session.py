@@ -4,7 +4,7 @@ import httpx
 from typing import List, Dict, Any, Optional
 from app.core.config import settings
 from .gemini_client import GeminiClient
-from .interview_graph import InterviewGraph, InterviewState, _max_questions_for_duration, _max_questions_per_topic
+from .interview_graph import InterviewGraph, InterviewState, _max_questions_for_duration, _max_questions_per_topic, _max_confusion_retries_for_duration
 from .schemas import Action
 
 class StreamingInterviewSession:
@@ -33,6 +33,7 @@ class StreamingInterviewSession:
             "consecutive_non_answers": 0,
             "max_questions": 0,
             "max_questions_per_topic": 0,
+            "max_confusion_retries": 2,
             "topic_question_counts": {},
             "input_tokens": 0,
             "output_tokens": 0,
@@ -148,7 +149,7 @@ class StreamingInterviewSession:
         self.start_time = time.time()
         self.duration_limit = duration
         max_q = _max_questions_for_duration(duration)
-        print(f"[Session] duration={duration}min → max_questions={max_q}")
+        print(f"[Session] duration={duration}min → max_questions={max_q} max_confusion_retries={_max_confusion_retries_for_duration(duration)}")
         
         # Static context summarization - now returns usage info too
         context, context_usage = await self.client.summarize_context(resume_text, jd_text, interview_type, role, company, candidate_name)
@@ -222,6 +223,7 @@ class StreamingInterviewSession:
             "consecutive_non_answers": 0,
             "max_questions": max_q,
             "max_questions_per_topic": _max_questions_per_topic(duration),
+            "max_confusion_retries": _max_confusion_retries_for_duration(duration),
             "topic_question_counts": {},
             "input_tokens": init_input_tokens,
             "output_tokens": init_output_tokens,
