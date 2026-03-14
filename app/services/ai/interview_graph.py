@@ -216,9 +216,13 @@ CANDIDATE RESPONDED: {state['last_user_input']}
 ─────────────────────
 
 STEP 1 — Classify answer_type FIRST (this drives the entire strategy):
-  end_requested    — candidate explicitly asked to stop, end, quit, leave, or said they are no longer interested in the interview — CHECK THIS FIRST
-  wait_requested   — candidate explicitly asked for a moment to think, or said "give me a second", "one moment", "let me think"
-  confused         — candidate said they don't understand, asked for clarification, asked you to explain / rephrase / simplify,
+  end_requested      — candidate explicitly asked to stop, end, quit, leave, or said they are no longer interested in the interview — CHECK THIS FIRST
+  coding_requested   — candidate explicitly asked to be given a coding question, DSA problem, or implementation task.
+                       EXAMPLES: "ask me a coding question", "give me a coding problem", "I want a DSA question",
+                       "can you give me a coding challenge", "please ask me something to code".
+                       Classify as this type BEFORE checking confused or off_topic.
+  wait_requested     — candidate explicitly asked for a moment to think, or said "give me a second", "one moment", "let me think"
+  confused           — candidate said they don't understand, asked for clarification, asked you to explain / rephrase / simplify,
                      or said the question is unclear. SPECIFIC EXAMPLES that MUST be classified as confused:
                        "I didn't get your question", "can you explain in simple language", "please repeat",
                        "repeat your question", "repeat the question", "can you repeat", "say that again",
@@ -233,6 +237,7 @@ STEP 1 — Classify answer_type FIRST (this drives the entire strategy):
 
 STEP 2 — Set answer_quality based on type:
   If answer_type is end_requested: set answer_quality to "not_applicable". The interview must end.
+  If answer_type is coding_requested: set answer_quality to "not_applicable". The candidate wants a coding challenge — do NOT update skill coverage.
   If answer_type is wait_requested: set answer_quality to "not_applicable". The candidate has NOT answered — do NOT score or update skill coverage.
   If answer_type is confused/refused/off_topic: set answer_quality to "not_applicable". Do NOT penalise for confusion.
   If genuine_answer: strong | adequate | weak | incorrect based on actual content.
@@ -290,7 +295,7 @@ STEP 5 — follow_up_hint: specific gap to probe IF should_follow_up is true. Em
             if data.answer_type in ("confused", "refused", "off_topic", "wait_requested"):
                 consecutive_non = prev_non + 1
             else:
-                consecutive_non = 0  # end_requested / genuine / incomplete all reset the streak
+                consecutive_non = 0  # end_requested / genuine / incomplete / coding_requested all reset the streak
 
             return {
                 "performance_summary": data.new_summary,
@@ -482,6 +487,18 @@ YOU MUST FOLLOW THESE RULES — NO EXCEPTIONS:
 
   Original question to simplify (DO NOT change the subject):
   "{last_q[:400]}"
+"""
+        elif answer_type == "coding_requested":
+            routing_block = """
+💻 CANDIDATE EXPLICITLY REQUESTED A CODING QUESTION.
+You MUST follow this exactly:
+  1. One short enthusiastic sentence (e.g. "Sure, let's get into some code!").
+  2. Ask a concrete, hands-on coding problem that fits their tech stack and seniority level.
+     — Real problem (no pseudocode prompts). Something they must actually implement.
+     — Examples: "Implement a function that...", "Write a solution to...", "Given this input, code a..."
+  3. You MUST set is_coding_question=true — this opens the code editor. This is NON-NEGOTIABLE.
+  4. action remains CONTINUE.
+  DO NOT ask a conceptual question. DO NOT ask about their experience. Write a coding problem.
 """
         elif answer_type == "refused":
             routing_block = """
