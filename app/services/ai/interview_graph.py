@@ -627,7 +627,11 @@ INSTRUCTIONS:
    - If you have two things to ask, pick the more important one and save the other for the NEXT turn.
    - Violation example: "Explain X, and also write a component that does Y" → FORBIDDEN.
    - Correct example: "In your [Project], how did you handle X?" → ONE question, ONE concept.
-6. is_coding_question=true ONLY when asking them to write/implement actual code in the editor.
+6. is_coding_question=true ONLY when asking them to WRITE/TYPE actual code in the editor.
+   — TRUE:  "Implement a function that...", "Write a solution for...", "Code a component that..."
+   — FALSE: "Describe how you...", "Tell me about a project...", "Explain your approach...",
+            "What techniques did you use...", "Walk me through...", "How did you optimise..."
+   — RULE: If the question starts with Describe / Explain / Tell / Walk / What / How / Why → is_coding_question=false, always.
 7. action=END only when: candidate explicitly requested to end (end_requested routing block above), time is truly up, or all key topics have been thoroughly explored.
 8. If the 🛑 END routing block is present above, action MUST be END — this overrides everything else.
 """
