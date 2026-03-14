@@ -1,4 +1,5 @@
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings, API_DESCRIPTION, TAGS_METADATA
@@ -6,8 +7,27 @@ from app.core.middleware import AuthMiddleware
 from app.api.v1.router import api_router
 from app.api.v1.ws_interview import ws_router as interview_ws_router
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ── Startup ──────────────────────────────────────────────────────────────
+    print("=" * 60)
+    print(f"[CONFIG] BACKEND_URL  = {settings.BACKEND_URL}")
+    print(f"[CONFIG] HOST:PORT    = {settings.HOST}:{settings.PORT}")
+    print(f"[CONFIG] REDIS_URL    = {settings.REDIS_URL}")
+    google_ok = "✓ set" if settings.GOOGLE_API_KEY else "✗ MISSING"
+    deepgram_ok = "✓ set" if settings.DEEPGRAM_KEY else "✗ MISSING"
+    print(f"[CONFIG] GOOGLE_API_KEY = {google_ok}")
+    print(f"[CONFIG] DEEPGRAM_KEY   = {deepgram_ok}")
+    if "localhost" in settings.BACKEND_URL:
+        print("[WARNING] BACKEND_URL points to localhost — token reporting will FAIL in production!")
+        print("[WARNING] Set BACKEND_URL env var to your production NestJS URL.")
+    print("=" * 60)
+    yield
+    # ── Shutdown ─────────────────────────────────────────────────────────────
+
 def create_app() -> FastAPI:
     app = FastAPI(
+        lifespan=lifespan,
         title="AI Interview Coach Backend",
         description=API_DESCRIPTION,
         version="2.0.0",

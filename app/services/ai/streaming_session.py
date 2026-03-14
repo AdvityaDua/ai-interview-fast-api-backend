@@ -290,14 +290,16 @@ class StreamingInterviewSession:
             "company": self.state.get("company", ""),
         }
 
+        target_url = f"{settings.BACKEND_URL}/analytics/ai-usage"
+        print(f"[AI] Reporting usage to {target_url}  in={self.input_tokens}, out={self.output_tokens}")
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{settings.BACKEND_URL}/analytics/ai-usage",
+                    target_url,
                     json=usage_data,
                     timeout=5.0
                 )
                 response.raise_for_status()
-            print(f"[AI] Usage reported: in={self.input_tokens}, out={self.output_tokens}, total={self.input_tokens + self.output_tokens} tokens for user {user_id} ({self.state.get('interview_type', '')})")
+            print(f"[AI] Usage reported OK: in={self.input_tokens}, out={self.output_tokens}, total={self.input_tokens + self.output_tokens} tokens for user {user_id} ({self.state.get('interview_type', '')})")
         except Exception as e:
-            print(f"[AI] Failed to report usage: {str(e)}")
+            print(f"[AI] Failed to report usage to {target_url}: {type(e).__name__}: {e}")
