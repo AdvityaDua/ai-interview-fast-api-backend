@@ -192,6 +192,7 @@ class InterviewGraph:
                 "follow_up_hint": "",
                 "last_answer_type": "not_applicable",
                 "consecutive_non_answers": 0,
+                "max_confusion_retries": state.get("max_confusion_retries", 2),
                 "input_tokens": state.get("input_tokens", 0),
                 "output_tokens": state.get("output_tokens", 0),
             }
@@ -220,6 +221,7 @@ STEP 1 — Classify answer_type FIRST (this drives the entire strategy):
   confused         — candidate said they don't understand, asked for clarification, asked you to explain / rephrase / simplify,
                      or said the question is unclear. SPECIFIC EXAMPLES that MUST be classified as confused:
                        "I didn't get your question", "can you explain in simple language", "please repeat",
+                       "repeat your question", "repeat the question", "can you repeat", "say that again",
                        "what do you mean", "I don't understand", "can you rephrase", "can you simplify",
                        "explain this to me", "I'm not sure what you're asking", "please clarify".
                      ANY request for the question to be explained differently = confused.
@@ -298,6 +300,7 @@ STEP 5 — follow_up_hint: specific gap to probe IF should_follow_up is true. Em
                 "last_answer_type": data.answer_type,
                 "consecutive_non_answers": consecutive_non,
                 "topic_question_counts": topic_counts,
+                "max_confusion_retries": state.get("max_confusion_retries", 2),
                 "input_tokens": state.get("input_tokens", 0) + in_tok,
                 "output_tokens": state.get("output_tokens", 0) + out_tok,
             }
@@ -311,6 +314,7 @@ STEP 5 — follow_up_hint: specific gap to probe IF should_follow_up is true. Em
                 "follow_up_hint": "",
                 "last_answer_type": "genuine_answer",
                 "consecutive_non_answers": 0,
+                "max_confusion_retries": state.get("max_confusion_retries", 2),
                 "input_tokens": state.get("input_tokens", 0),
                 "output_tokens": state.get("output_tokens", 0),
             }
@@ -412,7 +416,7 @@ Original question to re-state: {last_q[:400]}
 """
         elif answer_type == "confused":
             last_q = state.get("current_question", "")
-            max_retries = state.get("max_confusion_retries", 1)
+            max_retries = state.get("max_confusion_retries", 2)
 
             if consecutive_non >= max_retries + 1:
                 # Exhausted all rephrases — move on.
@@ -641,7 +645,7 @@ INSTRUCTIONS:
         budget_exhausted = max_q > 0 and questions_used > max_q
 
         # Reset confusion streak when we've moved on to a new question
-        max_retries = state.get("max_confusion_retries", 1)
+        max_retries = state.get("max_confusion_retries", 2)
         moved_on_from_confusion = (answer_type == "confused" and consecutive_non >= max_retries + 1)
 
         return {
