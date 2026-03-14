@@ -4,7 +4,7 @@ import httpx
 from typing import List, Dict, Any, Optional
 from app.core.config import settings
 from .gemini_client import GeminiClient
-from .interview_graph import InterviewGraph, InterviewState, _max_questions_for_duration
+from .interview_graph import InterviewGraph, InterviewState, _max_questions_for_duration, _max_questions_per_topic
 from .schemas import Action
 
 class StreamingInterviewSession:
@@ -32,6 +32,8 @@ class StreamingInterviewSession:
             "last_answer_type": "not_applicable",
             "consecutive_non_answers": 0,
             "max_questions": 0,
+            "max_questions_per_topic": 0,
+            "topic_question_counts": {},
             "input_tokens": 0,
             "output_tokens": 0,
         }
@@ -219,6 +221,8 @@ class StreamingInterviewSession:
             "last_answer_type": "not_applicable",
             "consecutive_non_answers": 0,
             "max_questions": max_q,
+            "max_questions_per_topic": _max_questions_per_topic(duration),
+            "topic_question_counts": {},
             "input_tokens": init_input_tokens,
             "output_tokens": init_output_tokens,
         })
@@ -230,12 +234,37 @@ class StreamingInterviewSession:
         elapsed_min = elapsed / 60.0
         remaining = self.duration_limit - elapsed_min
         elapsed_str = f"{int(elapsed_min)}m {int(elapsed % 60)}s"
-        
+        pct = elapsed_min / self.duration_limit
+
         if remaining <= 0:
-            return f"TIME: {elapsed_str} elapsed. Target met. WRAP UP."
-        return f"TIME: {elapsed_str} elapsed. ~{int(remaining)}m remaining."
+            return f"⏰ TIME UP ({elapsed_str} elapsed). CLOSE THE INTERVIEW NOW — set action=END immediately."
+        if pct >= 0.90:
+            return (f"🚨 FINAL MINUTES: {elapsed_str} elapsed, only ~{int(remaining * 60)}s left of {self.duration_limit}min. "
+                    f"Ask at most ONE more question then wrap up and set action=END.")
+        if pct >= 0.75:
+            return (f"⚠ Nearing end: {elapsed_str} elapsed, ~{int(remaining)}m remaining of {self.duration_limit}min. "
+                    f"Start steering toward a close — cover only the single most important topic left.")
+        return f"TIME: {elapsed_str} elapsed. ~{int(remaining)}m remaining of {self.duration_limit}min."
 
     async def stream_response(self, user_input: str = None):
+        # Hard time enforcement: skip the graph entirely if duration is exceeded
+        if self.duration_limit > 0 and self.start_time > 0:
+            elapsed_min = (time.time() - self.start_time) / 60.0
+            if elapsed_min >= self.duration_limit:
+                closing = (
+                    "We've reached the end of our scheduled time. "
+                    "Thank you so much for your time today — it was a great conversation. "
+                    "I'll make sure my feedback reaches the team. Best of luck!"
+                )
+                self.state["ended"] = True
+                yield {"type": "metadata", "is_coding": False}
+                chunk_size = 12
+                for i in range(0, len(closing), chunk_size):
+                    yield {"type": "text", "content": closing[i:i + chunk_size]}
+                    await asyncio.sleep(0.01)
+                self.state["history"].append({"role": "model", "content": closing})
+                return
+
         # Update local state
         self.state["last_user_input"] = user_input
         self.state["time_context"] = self.get_time_context()

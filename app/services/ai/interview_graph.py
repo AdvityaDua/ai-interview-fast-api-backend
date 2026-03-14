@@ -50,6 +50,10 @@ class InterviewState(TypedDict):
     # Question budget (0 = no limit)
     max_questions: int
 
+    # Per-topic question cap (0 = no limit)
+    max_questions_per_topic: int
+    topic_question_counts: Dict[str, int]   # skill → #times asked
+
     # Token accounting
     input_tokens: int
     output_tokens: int
@@ -69,6 +73,19 @@ def _max_questions_for_duration(duration_minutes: int) -> int:
     if duration_minutes <= 45:
         return 25       # 45 min  → up to 25 questions
     return 30           # 60 min  → up to 30 questions
+
+
+def _max_questions_per_topic(duration_minutes: int) -> int:
+    """Return the maximum consecutive questions allowed on a single topic/skill."""
+    if duration_minutes <= 0:
+        return 0        # unlimited
+    if duration_minutes <= 15:
+        return 1        # 15 min → max 1 question per topic (move on fast)
+    if duration_minutes <= 30:
+        return 2        # 30 min → max 2 per topic
+    if duration_minutes <= 45:
+        return 2        # 45 min → max 2 per topic
+    return 3            # 60 min → max 3 per topic
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -243,6 +260,17 @@ STEP 5 — follow_up_hint: specific gap to probe IF should_follow_up is true. Em
                 remaining = state["skills_remaining"]
                 covered = state["skills_covered"]
 
+            # Update per-topic question counts
+            topic_counts = dict(state.get("topic_question_counts", {}) or {})
+            if data.answer_type in ("genuine_answer", "incomplete"):
+                for skill in data.newly_covered_skills:
+                    topic_counts[skill] = topic_counts.get(skill, 0) + 1
+
+            # Auto-remove skills from remaining that have hit the per-topic cap
+            max_per_topic = state.get("max_questions_per_topic", 0) or 0
+            if max_per_topic > 0:
+                remaining = [s for s in remaining if topic_counts.get(s, 0) < max_per_topic]
+
             # Track consecutive non-answers
             prev_non = state.get("consecutive_non_answers", 0)
             if data.answer_type in ("confused", "refused", "off_topic", "wait_requested"):
@@ -257,6 +285,7 @@ STEP 5 — follow_up_hint: specific gap to probe IF should_follow_up is true. Em
                 "follow_up_hint": data.follow_up_hint if data.should_follow_up else "",
                 "last_answer_type": data.answer_type,
                 "consecutive_non_answers": consecutive_non,
+                "topic_question_counts": topic_counts,
                 "input_tokens": state.get("input_tokens", 0) + in_tok,
                 "output_tokens": state.get("output_tokens", 0) + out_tok,
             }
@@ -333,6 +362,18 @@ You MUST:
   - Prioritise the highest-value uncovered topics.
   - Start steering toward a natural close.
 """
+
+        # ── Per-topic cap block ──
+        topic_counts = state.get("topic_question_counts", {}) or {}
+        max_per_topic = state.get("max_questions_per_topic", 0) or 0
+        exhausted_topics = [s for s, c in topic_counts.items() if max_per_topic > 0 and c >= max_per_topic]
+        exhausted_topics_block = ""
+        if exhausted_topics:
+            exhausted_topics_block = (
+                f"\n⛔ TOPIC LIMIT REACHED — these skills have already been explored enough — DO NOT ask more about them: "
+                f"{', '.join(exhausted_topics)}\n"
+                f"  Pick a DIFFERENT skill from SKILLS REMAINING that has NOT been exhausted.\n"
+            )
 
         # ── Response-type routing (core new logic) ──
         routing_block = ""
@@ -515,6 +556,7 @@ RECENT CONVERSATION:
 {recent_text}
 {'═' * 60}
 {question_limit_block}
+{exhausted_topics_block}
 {routing_block}
 {follow_up_block}
 {anti_repeat_block}
