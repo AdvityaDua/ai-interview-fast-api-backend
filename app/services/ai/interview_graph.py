@@ -103,11 +103,11 @@ class InterviewGraph:
             google_api_key=api_key,
             temperature=0.25,
         )
-        # Standard temperature for question generation → natural, varied questions
+        # Standard temperature for question generation → natural, focused questions
         self.gen_llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,
-            temperature=0.65,
+            temperature=0.4,
         )
 
         # Structured outputs — include_raw=True lets us read usage_metadata
@@ -304,15 +304,19 @@ Original question to re-state: {last_q[:400]}
         elif answer_type == "confused":
             last_q = state.get("current_question", "")
             routing_block = f"""
-🔄 CANDIDATE WAS CONFUSED by the last question. Follow this strategy exactly:
-  1. Acknowledge briefly (one sentence, e.g. "No problem, let me rephrase that.").
-  2. Ask the SAME CONCEPTUAL QUESTION rephrased more concisely and concretely.
-     — Use an example or analogy from the candidate's OWN stack/experience (see CANDIDATE CONTEXT).
-     — If the original had multiple parts, ask only the most essential ONE part.
-  3. Do NOT jump to a different topic.
-  4. Do NOT drop difficulty to trivial level — confusion about phrasing ≠ lack of knowledge.
-     A React developer confused about one question still knows React well.
-Original question to rephrase: {last_q[:300]}
+🔄 CANDIDATE WAS CONFUSED by the last question. Follow this EXACT strategy:
+  1. ONE brief acknowledgement sentence (e.g. "No problem!").
+  2. Strip the original question down to its SINGLE most important sub-question.
+     — Remove ALL secondary parts, sub-parts, and follow-ons.
+     — Rewrite it as a SHORT, direct sentence (15 words max if possible).
+     — Ground it in a CONCRETE example using the candidate's own stack/projects.
+     — Example transform:
+         BAD (original):  "Explain React's virtual DOM AND how it influenced your project AND write a component..."
+         GOOD (rephrased): "In your ASL project, why did you choose React over plain JS for the UI?"
+  3. If the question had a coding part, DROP the coding part for now — ask it verbally first.
+  4. Do NOT ask anything new. Do NOT add "also" or "additionally".
+  5. action must remain CONTINUE.
+Original question to simplify: {last_q[:300]}
 """
         elif answer_type == "refused":
             routing_block = """
@@ -428,13 +432,20 @@ INTERVIEW TYPE RULES:
 {'═' * 60}
 
 INSTRUCTIONS:
-1. Opening turn (turn 0): greet candidate BY NAME from CANDIDATE CONTEXT; ask a warm-up question about their PRIMARY TECHNOLOGY listed in the resume.
+1. Opening turn (turn 0): greet candidate BY NAME from CANDIDATE CONTEXT; ask a single warm-up question about their PRIMARY TECHNOLOGY listed in the resume.
 2. All other turns: apply the routing strategy above FIRST, then pick the best next question.
 3. ALWAYS anchor questions to the candidate's stated experience and stack from CANDIDATE CONTEXT. Never ask generic language-agnostic questions when their tech stack is known.
-4. question = the exact words you say to the candidate. Natural, conversational, one focused question.
-5. is_coding_question=true ONLY when asking them to write/implement actual code in the editor.
-6. action=END only when: candidate explicitly requested to end (end_requested routing block above), time is truly up, or all key topics have been thoroughly explored.
-7. If the 🛑 END routing block is present above, action MUST be END — this overrides everything else.
+4. question = the exact words you say to the candidate. Natural, conversational tone.
+5. ⚠ ONE QUESTION ONLY — STRICTLY ENFORCED:
+   - Your "question" field MUST contain exactly ONE question.
+   - NEVER combine two questions with "and", "also", "additionally", "let's also", or "on top of that".
+   - NEVER ask a conceptual question AND a coding question in the same turn.
+   - If you have two things to ask, pick the more important one and save the other for the NEXT turn.
+   - Violation example: "Explain X, and also write a component that does Y" → FORBIDDEN.
+   - Correct example: "In your [Project], how did you handle X?" → ONE question, ONE concept.
+6. is_coding_question=true ONLY when asking them to write/implement actual code in the editor.
+7. action=END only when: candidate explicitly requested to end (end_requested routing block above), time is truly up, or all key topics have been thoroughly explored.
+8. If the 🛑 END routing block is present above, action MUST be END — this overrides everything else.
 """
 
         result = await self.structured_llm.ainvoke(prompt)
