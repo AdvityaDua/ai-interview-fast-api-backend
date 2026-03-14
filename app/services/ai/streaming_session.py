@@ -22,8 +22,17 @@ class StreamingInterviewSession:
             "role": "",
             "company": "",
             "ended": False,
+            # New accuracy fields
+            "questions_asked": [],
+            "current_question": "",
+            "follow_up_hint": "",
+            "is_developer_role": False,
+            "coding_questions_asked": 0,
+            "turn_number": 0,
+            "last_answer_type": "not_applicable",
+            "consecutive_non_answers": 0,
             "input_tokens": 0,
-            "output_tokens": 0
+            "output_tokens": 0,
         }
         self.start_time: float = 0.0
         self.duration_limit: int = 0 
@@ -143,11 +152,22 @@ class StreamingInterviewSession:
         init_input_tokens = context_usage.get("input_tokens", 0)
         init_output_tokens = context_usage.get("output_tokens", 0)
         
-        # Extract skills for structured tracking (Optimized turn generation)
-        # We perform a one-time extraction to avoid sending the whole JD later
-        skills_prompt = f"Based on this JD summary, list the top 10 required technical/soft skills for a {interview_type} round as a simple comma-separated list:\n{context}"
+        # Extract skills for structured tracking (one-time init call, saves tokens on every turn)
+        # For developer/technical roles get 12 specific skills; for others, 10 broader ones
+        _dev_hint = (
+            "Include specific technologies, languages, frameworks, and algorithms relevant "
+            "to the role. Be granular (e.g. 'React hooks', 'database indexing', 'REST API design')."
+            if interview_type in ("technical", "problem")
+            else "Include both technical and soft skills relevant to the role and interview type."
+        )
+        skills_prompt = (
+            f"Based on this context summary, list the top 12 skills/topics to evaluate in a "
+            f"{interview_type} interview for a '{role or 'the role'}' candidate. "
+            f"{_dev_hint} "
+            f"Return ONLY a comma-separated list, no numbering, no explanation.\n\n{context}"
+        )
         skills_res = await self.client.client.aio.models.generate_content(model=self.client.model_name, contents=skills_prompt)
-        initial_skills = [s.strip() for s in skills_res.text.split(',') if s.strip()]
+        initial_skills = [s.strip() for s in skills_res.text.split(',') if s.strip()][:12]
         
         # Track skills extraction tokens
         if hasattr(skills_res, 'usage_metadata'):
@@ -157,6 +177,19 @@ class StreamingInterviewSession:
         
         print(f"[Session] Total init tokens: in={init_input_tokens}, out={init_output_tokens}")
 
+        # Detect developer role for coding question enforcement
+        _developer_keywords = (
+            "developer", "engineer", "programmer", "software", "backend", "frontend",
+            "full stack", "fullstack", "sde", "swe", "coder", "architect", "devops",
+            "data scientist", "ml engineer", "machine learning", "android", "ios",
+        )
+        role_lower = (role or "").lower()
+        is_developer = (
+            interview_type in ("technical", "problem")
+            and any(kw in role_lower for kw in _developer_keywords)
+        )
+        print(f"[Session] is_developer_role={is_developer} for role={role!r} type={interview_type!r}")
+
         self.state.update({
             "user_id": user_id,
             "session_id": session_id,
@@ -165,12 +198,25 @@ class StreamingInterviewSession:
             "role": role,
             "company": company,
             "history": [],
-            "performance_summary": f"Interviewer is preparing to meet {candidate_name or 'the candidate'} for a {interview_type} round as {role}.",
+            "performance_summary": (
+                f"Interview starting. Candidate: {candidate_name or 'unknown'}. "
+                f"Role: {role or 'not specified'}. Round: {interview_type}. "
+                f"No answers evaluated yet."
+            ),
             "skills_remaining": initial_skills,
             "skills_covered": [],
             "ended": False,
+            # Accuracy fields
+            "questions_asked": [],
+            "current_question": "",
+            "follow_up_hint": "",
+            "is_developer_role": is_developer,
+            "coding_questions_asked": 0,
+            "turn_number": 0,
+            "last_answer_type": "not_applicable",
+            "consecutive_non_answers": 0,
             "input_tokens": init_input_tokens,
-            "output_tokens": init_output_tokens
+            "output_tokens": init_output_tokens,
         })
 
     def get_time_context(self) -> str:
@@ -218,7 +264,7 @@ class StreamingInterviewSession:
 
         # Real-time Reporting: Send current usage to backend after each turn
         # This allows the admin dashboard to see cost/token growth in real-time
-        asyncio.create_task(self.report_usage(self.state.get("user_id", "anonymous"), self.state.get("session_id", "demo")))
+        asyncio.create_task(self.report_usage(self.state.get("user_id") or "anonymous", self.state.get("session_id") or "demo"))
 
     async def report_usage(self, user_id: str, session_id: str):
         """Send token usage to the NestJS backend for analytics."""
