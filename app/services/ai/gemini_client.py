@@ -24,19 +24,36 @@ class GeminiClient:
             "hr": "Focus on: cultural fit, career goals, salary expectations, work-life balance views, motivation and passion.",
         }.get(interview_type, "Focus on: overall candidate assessment.")
 
+        has_jd = bool(jd_text and jd_text.strip())
+        jd_block = f"""
+        JOB DESCRIPTION (HIGH PRIORITY — questions must map to these requirements first):
+        {jd_text}
+        """ if has_jd else "JOB DESCRIPTION: Not provided."
+
+        jd_instruction = (
+            "⚠ JD IS PROVIDED: The interviewer MUST prioritise skills, technologies, "
+            "and responsibilities listed in the JD above everything else. "
+            "If a skill appears in the JD but not the resume, flag it clearly as a gap to probe. "
+            "Questions must validate the candidate against the JD requirements first, "
+            "then explore resume depth."
+        ) if has_jd else (
+            "No JD provided — base the interview entirely on the resume and role/company context."
+        )
+
         prompt = f"""
         You are an expert recruiter preparing for a {interview_type.upper()} interview round.
         
         TASK:
         1. Extract the candidate's FULL NAME directly from the RESUME. If not found, use "{candidate_name or "the candidate"}".
-        2. Analyze the following Resume and Job Description (JD). 
+        2. Analyze the Resume and Job Description below.
         3. Create a dense, information-rich summary for the interviewer.
-        
+
+        {jd_instruction}
+
         RESUME:
         {resume_text}
 
-        JOB DESCRIPTION:
-        {jd_text}
+        {jd_block}
         
         {f'The role is: {role}' if role else ''}
         {f'The company is: {company}' if company else ''}
@@ -47,10 +64,11 @@ class GeminiClient:
         IDENTIFIED NAME: [Strictly extract from resume]
         Candidate Profile
         Seniority Estimate
-        Matched Skills
-        Missing Skills
+        JD Required Skills: [Only if JD provided — list every explicit skill/tool/language the JD demands]
+        Matched Skills: [Skills present in BOTH resume and JD — mark these as HIGH PRIORITY to test]
+        Missing Skills: [Skills the JD requires but resume does NOT show — flag as gaps]
         Key Projects and Experiences
-        Interview Focus Areas (tailored for {interview_type} round)
+        Interview Focus Areas (tailored for {interview_type} round — JD requirements come first)
         """
         
         response = await asyncio.to_thread(

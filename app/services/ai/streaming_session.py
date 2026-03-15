@@ -15,6 +15,7 @@ class StreamingInterviewSession:
             "history": [],
             "performance_summary": "The interview is just starting.",
             "context_summary": "",
+            "has_jd": False,
             "last_user_input": None,
             "current_evaluation": None,
             "interview_type": "technical",
@@ -28,6 +29,7 @@ class StreamingInterviewSession:
             "follow_up_hint": "",
             "is_developer_role": False,
             "coding_questions_asked": 0,
+            "last_question_was_coding": False,
             "turn_number": 0,
             "last_answer_type": "not_applicable",
             "consecutive_non_answers": 0,
@@ -159,18 +161,27 @@ class StreamingInterviewSession:
         init_output_tokens = context_usage.get("output_tokens", 0)
         
         # Extract skills for structured tracking (one-time init call, saves tokens on every turn)
-        # For developer/technical roles get 12 specific skills; for others, 10 broader ones
+        # JD skills get explicit priority when a JD was provided.
         _dev_hint = (
             "Include specific technologies, languages, frameworks, and algorithms relevant "
             "to the role. Be granular (e.g. 'React hooks', 'database indexing', 'REST API design')."
             if interview_type in ("technical", "problem")
             else "Include both technical and soft skills relevant to the role and interview type."
         )
+        _jd_hint = (
+            "IMPORTANT: Skills explicitly listed in the JD Required Skills section MUST appear "
+            "first in your list — even if the candidate's resume is weak on them. These are the "
+            "gaps and requirements the interviewer MUST probe."
+            if jd_text and jd_text.strip()
+            else ""
+        )
         skills_prompt = (
             f"Based on this context summary, list the top 12 skills/topics to evaluate in a "
             f"{interview_type} interview for a '{role or 'the role'}' candidate. "
             f"{_dev_hint} "
-            f"Return ONLY a comma-separated list, no numbering, no explanation.\n\n{context}"
+            f"{_jd_hint} "
+            f"Return ONLY a comma-separated list, ordered by importance (JD-required skills first), "
+            f"no numbering, no explanation.\n\n{context}"
         )
         skills_res = await self.client.client.aio.models.generate_content(model=self.client.model_name, contents=skills_prompt)
         initial_skills = [s.strip() for s in skills_res.text.split(',') if s.strip()][:12]
@@ -200,6 +211,7 @@ class StreamingInterviewSession:
             "user_id": user_id,
             "session_id": session_id,
             "context_summary": context,
+            "has_jd": bool(jd_text and jd_text.strip()),
             "interview_type": interview_type,
             "role": role,
             "company": company,
@@ -218,6 +230,7 @@ class StreamingInterviewSession:
             "follow_up_hint": "",
             "is_developer_role": is_developer,
             "coding_questions_asked": 0,
+            "last_question_was_coding": False,
             "turn_number": 0,
             "last_answer_type": "not_applicable",
             "consecutive_non_answers": 0,

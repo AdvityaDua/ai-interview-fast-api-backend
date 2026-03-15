@@ -15,6 +15,7 @@ class InterviewState(TypedDict):
     # Compressed state summaries (primary info source for turn generation)
     performance_summary: str       # Rolling evaluation of candidate quality
     context_summary: str           # Resume + JD summary from initialization
+    has_jd: bool                   # Whether a Job Description was provided
 
     # Skill coverage tracking
     skills_remaining: List[str]
@@ -38,6 +39,7 @@ class InterviewState(TypedDict):
     # Developer-role coding enforcement
     is_developer_role: bool        # Detected from role/context at init
     coding_questions_asked: int    # How many coding questions asked so far
+    last_question_was_coding: bool # Whether the most recent question was a coding task
     turn_number: int               # Turn index for pacing decisions
 
     # Response classification from last evaluate_turn (drives question strategy)
@@ -109,6 +111,7 @@ INTERVIEW TYPE: TECHNICAL
 • ALWAYS base your first 2-3 questions on the candidate’s OWN tech stack listed in their resume (React, Node, Python, etc.). Do NOT ask generic language-agnostic questions when you know what tools they use.
 • Cover: data structures, algorithms, system design, language-specific deep-dives, debugging/performance reasoning.
 • Ask the candidate to WRITE CODE (is_coding_question=true) when exploring algorithms or implementation tasks.
+• Also set is_coding_question=true when asking them to show step-by-step calculations, derivations, or worked numeric examples (e.g. convolution, matrix ops, complexity math) — the editor serves as a scratchpad for written work too.
 • When they submit code: evaluate correctness, edge-cases, and time/space complexity.
 • Progression arc: warm-up on their primary stack → core CS problem → system design / architecture → harder algorithm or optimisation.
 • For SENIOR candidates (5+ years): skip entry-level questions entirely. Focus on architecture decisions, trade-offs, performance bottlenecks, and scalability.
@@ -422,7 +425,11 @@ Original question to re-state: {last_q[:400]}
         elif answer_type == "confused":
             last_q = state.get("current_question", "")
             max_retries = state.get("max_confusion_retries", 2)
-
+            last_was_coding = state.get("last_question_was_coding", False)
+            coding_note = (
+                "\n  ⚠ THE PREVIOUS QUESTION WAS A CODING TASK. Do NOT re-open the code editor (is_coding_question=false). "
+                "Convert the coding task into a verbal question about the same concept first."
+            ) if last_was_coding else ""
             if consecutive_non >= max_retries + 1:
                 # Exhausted all rephrases — move on.
                 routing_block = f"""
@@ -431,7 +438,7 @@ Original question to re-state: {last_q[:400]}
 YOU MUST:
   1. One short empathetic sentence (e.g. "No worries, let’s move on!").
   2. Ask a BRAND NEW question on a DIFFERENT skill/topic from SKILLS REMAINING.
-  3. The new question must be clear, concrete, one sentence.
+  3. The new question must be clear, concrete, one sentence. is_coding_question=false.
   4. action remains CONTINUE. Do NOT reference the previous question.
 
 Previous question you must NOT rephrase again: "{last_q[:200]}"
@@ -441,6 +448,7 @@ Previous question you must NOT rephrase again: "{last_q[:200]}"
                 routing_block = f"""
 🔄 SECOND ATTEMPT: Candidate is still confused. Rephrase once more, even simpler.
 This is your LAST rephrase — if they are confused again after this, you will move on.
+{coding_note}
 
 YOU MUST:
   1. One warm sentence (e.g. "Let me try once more!").
@@ -472,11 +480,16 @@ YOU MUST FOLLOW THESE RULES — NO EXCEPTIONS:
     Remove jargon. Remove sub-parts. Remove "and also". Max 20 words.
     Ground it in a real, specific example (e.g. "In your [project], why did you choose X?").
 
-  RULE 3 — DROP CODING FOR NOW:
-    If the original had a coding task, remove it. Ask the concept verbally first.
+  RULE 3 — DROP CODING, BRIDGE TO VERBAL:
+    If the original was a coding task (is_coding_question was true), do NOT re-open the code editor.
+    Instead, ask the same concept as a verbal question first:
+      e.g. If original was "Implement a binary search function" →
+           Rephrase as "Can you walk me through how binary search works in plain words?"
+    Only return to the coding problem after the candidate has shown verbal understanding.
+    is_coding_question must be false for this rephrased question.
 
   RULE 4 — DO NOT ADD ANYTHING ELSE:
-    Start with one acknowledgement sentence ("Sure!", "Of course!", "No problem!").
+    Start with one warm acknowledgement sentence ("Sure!", "Of course!", "No problem!").
     Then ask ONLY the rephrased question. Nothing after it.
     action must remain CONTINUE.
 
@@ -484,6 +497,7 @@ YOU MUST FOLLOW THESE RULES — NO EXCEPTIONS:
     ✓ Is my rephrased question about the same topic as the original? (If NO → rewrite it)
     ✓ Does it have only one question mark? (If NO → remove extras)
     ✓ Is it shorter and simpler than the original? (If NO → simplify further)
+    ✓ If original was a coding question, is is_coding_question set to false? (If NO → fix it)
 
   Original question to simplify (DO NOT change the subject):
   "{last_q[:400]}"
@@ -526,8 +540,13 @@ the part they left unfinished.
         follow_up_block = ""
         if follow_up and answer_type == "genuine_answer":
             follow_up_block = (
-                f"\n🔁 FOLLOW-UP REQUIRED: Candidate's answer was weak on a key point. "
-                f"Probe this specific gap BEFORE moving to any new topic: «{follow_up}»"
+                f"\n🔁 FOLLOW-UP REQUIRED: Candidate's answer was weak or incomplete on a key point.\n"
+                f"  Gap to probe: «{follow_up}»\n"
+                f"  You MUST ask a follow-up question drilling into THIS SPECIFIC GAP before moving to any new topic.\n"
+                f"  Requirements: (1) Reference something specific they said in their last answer.\n"
+                f"  (2) Ask 'how', 'why', or 'what happened when' — not just 'can you explain more'.\n"
+                f"  (3) If the gap is technical, ask for a concrete example or a walk-through of their implementation.\n"
+                f"  Do NOT move to a new skill until this gap is properly addressed."
             )
 
         # ── Coding mandate for developer roles ──
@@ -535,18 +554,21 @@ the part they left unfinished.
         coding_asked = state.get("coding_questions_asked", 0)
         coding_block = ""
         if is_developer and answer_type not in ("end_requested",):
-            if coding_asked == 0 and turn_number >= 1:
+            if coding_asked == 0 and turn_number >= 2 and answer_type not in ("confused", "wait_requested"):
                 coding_block = (
                     "\n💻 CODING MANDATE: This is a developer candidate and NO coding question has been asked yet. "
-                    "You MUST ask a hands-on coding problem THIS TURN regardless of interview type — "
-                    "set is_coding_question=true. "
-                    "Pick a problem directly relevant to their primary stack (see CANDIDATE CONTEXT). "
-                    "This is not optional — asking only verbal/conceptual questions to a developer is a failure."
+                    "You MUST ask a hands-on coding problem THIS TURN — set is_coding_question=true. "
+                    "Requirements: (1) Use a problem directly relevant to their primary stack from CANDIDATE CONTEXT. "
+                    "(2) Match their seniority level — for senior candidates, no trivial problems. "
+                    "(3) State the problem clearly in plain English — one paragraph max. "
+                    "(4) Do NOT combine a verbal question with the coding task in the same turn. "
+                    "This is not optional — asking only verbal questions to a developer is a failure."
                 )
-            elif coding_asked == 1 and turn_number >= 4 and answer_type not in ("confused", "refused"):
+            elif coding_asked == 1 and turn_number >= 5 and answer_type not in ("confused", "refused", "wait_requested"):
                 coding_block = (
                     "\n💻 CODING RECOMMENDATION: Only one coding problem asked so far for a developer candidate. "
-                    "If conversationally appropriate this turn, present a second coding problem (is_coding_question=true)."
+                    "If the last 2 answers have been strong, this is a good time to present a second, harder coding problem "
+                    "(is_coding_question=true). If the candidate is still struggling, skip this and continue probing concepts verbally."
                 )
 
         # ── Difficulty calibration ──
@@ -581,6 +603,19 @@ the part they left unfinished.
         # ── Type-specific rules ──
         type_rules = _TYPE_RULES.get(state["interview_type"], _TYPE_RULES["technical"])
 
+        # ── JD precedence block ──
+        has_jd = state.get("has_jd", False)
+        jd_precedence_block = ""
+        if has_jd:
+            jd_precedence_block = (
+                "\n📋 JD PROVIDED — QUESTION PRIORITY ORDER:\n"
+                "  1. FIRST probe skills listed under 'JD Required Skills' in CANDIDATE CONTEXT — these are what the employer needs.\n"
+                "  2. THEN explore 'Matched Skills' (candidate has them, JD wants them) — validate actual depth.\n"
+                "  3. THEN probe 'Missing Skills' (JD requires, resume lacks) — these are the most important gaps.\n"
+                "  4. LAST explore resume depth on skills NOT in the JD.\n"
+                "  If you're choosing between two topics of equal interest, always pick the JD-required one.\n"
+            )
+
         prompt = f"""You are an expert interviewer conducting a {state['interview_type'].upper()} interview.
 
 {'═' * 60}
@@ -588,7 +623,7 @@ CANDIDATE CONTEXT (resume + JD summary):
 {context}
 Role: {state.get('role', 'Not specified')} | Company: {state.get('company', 'Not specified')}
 {'═' * 60}
-
+{jd_precedence_block}
 INTERVIEW PROGRESS — Turn {turn_number + 1}{f' of {max_q}' if max_q > 0 else ''}:
 • Skills covered  : {', '.join(state['skills_covered']) if state['skills_covered'] else 'None yet'}
 • Skills remaining: {', '.join(state['skills_remaining'][:10]) if state['skills_remaining'] else 'All covered — deepen existing topics'}
@@ -616,24 +651,43 @@ INTERVIEW TYPE RULES:
 {'═' * 60}
 
 INSTRUCTIONS:
-1. Opening turn (turn 0): greet candidate BY NAME from CANDIDATE CONTEXT; ask a single warm-up question about their PRIMARY TECHNOLOGY listed in the resume.
+1. Opening turn (turn 0): greet candidate BY NAME from CANDIDATE CONTEXT; ask a single warm-up question about their PRIMARY TECHNOLOGY listed in the resume or JD.
 2. All other turns: apply the routing strategy above FIRST, then pick the best next question.
-3. ALWAYS anchor questions to the candidate's stated experience and stack from CANDIDATE CONTEXT. Never ask generic language-agnostic questions when their tech stack is known.
-4. question = the exact words you say to the candidate. Natural, conversational tone.
-5. ⚠ ONE QUESTION ONLY — STRICTLY ENFORCED:
-   - Your "question" field MUST contain exactly ONE question.
-   - NEVER combine two questions with "and", "also", "additionally", "let's also", or "on top of that".
-   - NEVER ask a conceptual question AND a coding question in the same turn.
+3. ALWAYS anchor questions to the candidate's stated experience and stack. Never ask generic language-agnostic questions when their tech stack is known.
+4. If a JD is present (see 📋 JD block above): prioritise JD-required skills and gaps over resume exploration.
+5. question = the exact words you say to the candidate. Natural, conversational, interviewer tone.
+6. QUESTION DEPTH — STRICTLY ENFORCED:
+   - Never ask a question a first-year student could answer trivially if the candidate has real experience.
+   - Prefer "how/why/what trade-off" over "what is" — probe understanding, not definitions.
+   - Ask for SPECIFICS: "In your [project/company], how did you handle X?" not "how would you handle X?"
+   - After a strong answer: go DEEPER — ask about edge cases, performance, alternatives considered.
+   - After a weak answer: go SIMPLER on the same topic — break it into a smaller concrete sub-question.
+7. ⚠ ONE QUESTION ONLY — STRICTLY ENFORCED:
+   - Your "question" field MUST contain exactly ONE question mark.
+   - NEVER combine a conceptual question AND a coding task in the same turn.
    - If you have two things to ask, pick the more important one and save the other for the NEXT turn.
-   - Violation example: "Explain X, and also write a component that does Y" → FORBIDDEN.
-   - Correct example: "In your [Project], how did you handle X?" → ONE question, ONE concept.
-6. is_coding_question=true ONLY when asking them to WRITE/TYPE actual code in the editor.
-   — TRUE:  "Implement a function that...", "Write a solution for...", "Code a component that..."
-   — FALSE: "Describe how you...", "Tell me about a project...", "Explain your approach...",
-            "What techniques did you use...", "Walk me through...", "How did you optimise..."
-   — RULE: If the question starts with Describe / Explain / Tell / Walk / What / How / Why → is_coding_question=false, always.
-7. action=END only when: candidate explicitly requested to end (end_requested routing block above), time is truly up, or all key topics have been thoroughly explored.
-8. If the 🛑 END routing block is present above, action MUST be END — this overrides everything else.
+   - Violation: "Explain X, and also write a component that does Y" → FORBIDDEN.
+8. is_coding_question=true when asking them to WRITE/TYPE actual code OR show written work in the editor.
+   — TRUE (code):      "Implement a function that...", "Write a solution for...", "Code a component that...", "Write a query that..."
+   — TRUE (show work): Any question that EXPLICITLY asks the candidate to show calculations, derivations, step-by-step
+                       numeric examples, or worked math — even if it starts with "walk me through" or "can you show".
+                       Trigger phrases that MUST set is_coding_question=true:
+                         • "showing the calculations involved"
+                         • "show the calculations / show your working / show the math"
+                         • "show me how X operates with specific values / weights / numbers"
+                         • "demonstrate with a worked example / numerical example"
+                         • "walk me through the steps showing the actual numbers"
+                         • "show step by step with values"
+   — FALSE (verbal): "Describe how you...", "Tell me about a project...", "Explain your approach...",
+                     "What techniques did you use...", "How did you optimise...", "Why did you choose..."
+                     "Walk me through your thinking..." (NO numbers/calculations explicitly requested)
+   — RULE: The presence of "showing the calculations", "show the math", "show your work", "worked example",
+           "specific values/weights" anywhere in the question → is_coding_question=true, even if the
+           question starts with Walk / How / Can you.
+   — RULE: Pure verbal/conceptual questions (no explicit request to show written work) → is_coding_question=false.
+   — RULE: NEVER set is_coding_question=true on a confused / rephrase turn.
+9. action=END only when: candidate explicitly requested to end, time is truly up, or all key JD+resume topics thoroughly explored.
+10. If the 🛑 END routing block is present above, action MUST be END — this overrides everything else.
 """
 
         result = await self.structured_llm.ainvoke(prompt)
@@ -674,6 +728,7 @@ INSTRUCTIONS:
             "history": new_history,
             "ended": evaluation.decision.action == Action.END or budget_exhausted,
             "current_question": evaluation.next_step.question,
+            "last_question_was_coding": evaluation.next_step.is_coding_question,
             "questions_asked": new_questions_asked,
             "coding_questions_asked": new_coding_count,
             "turn_number": turn_number + 1,
