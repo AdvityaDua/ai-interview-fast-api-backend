@@ -10,10 +10,12 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 class LLMScorer:
-    def __init__(self, client=None, model="llama-3.1-8b-instant", temperature=0.0, timeout=60):
+    def __init__(self, client=None, model=None, temperature=0.0, timeout=60):
         from groq import Groq
-        self.client = client or Groq()
-        self.model = model
+        from app.core.key_manager import key_manager
+        groq_key = key_manager.get_groq_key() or os.getenv("GROQ_API_KEY")
+        self.client = client or (Groq(api_key=groq_key) if groq_key else Groq())
+        self.model = model or key_manager.get_groq_model()
         self.temperature = temperature
         self.timeout = timeout
         # Cumulative token counters — reset per upload request

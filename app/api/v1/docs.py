@@ -10,7 +10,14 @@ load_dotenv(dotenv_path="/Users/karmansingh/Desktop/work/ai_interview/ai/.env")
 router = APIRouter()
 
 DOCS_DIR = "/Users/karmansingh/Desktop/work/ai_interview/backend/docs_content"
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
+def _get_groq_key() -> str:
+    from app.core.key_manager import key_manager
+    return key_manager.get_groq_key() or os.environ.get("GROQ_API_KEY", "")
+
+def _get_groq_model() -> str:
+    from app.core.key_manager import key_manager
+    return key_manager.get_groq_model()
 
 def get_seo_topics():
     prompt = """
@@ -44,11 +51,11 @@ def get_seo_topics():
     ]
     """
     headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Authorization": f"Bearer {_get_groq_key()}",
         "Content-Type": "application/json"
     }
     data = {
-        "model": "llama-3.1-8b-instant",
+        "model": _get_groq_model(),
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.7
     }
@@ -94,11 +101,11 @@ def generate_seo_article(topic, subtopic):
     Ensure perfect premium Markdown. Do NOT use HTML tags. Keep it looking expert-level, actionable engineering content.
     """
     headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Authorization": f"Bearer {_get_groq_key()}",
         "Content-Type": "application/json"
     }
     data = {
-        "model": "llama-3.1-8b-instant",
+        "model": _get_groq_model(),
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.6
     }

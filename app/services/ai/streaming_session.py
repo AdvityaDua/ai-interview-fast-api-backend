@@ -316,17 +316,24 @@ class StreamingInterviewSession:
 
     async def report_usage(self, user_id: str, session_id: str):
         """Send token usage to the NestJS backend for analytics."""
-        # GEMINI 2.0 FLASH PRICING (Estimates)
-        # Input: $0.10 / 1M tokens
-        # Output: $0.40 / 1M tokens
-        in_cost = (self.input_tokens / 1_000_000) * 0.10
-        out_cost = (self.output_tokens / 1_000_000) * 0.40
+        from app.core.key_manager import key_manager
+        active_model = key_manager.get_gemini_model()
+        # Per-model pricing (USD per 1M tokens)
+        PRICING = {
+            "gemini-2.5-flash":    (0.075, 0.30),
+            "gemini-2.5-pro":      (1.25,  10.00),
+            "gemini-1.5-flash":    (0.075, 0.30),
+            "gemini-1.5-flash-8b": (0.0375, 0.15),
+        }
+        in_price, out_price = PRICING.get(active_model, (0.075, 0.30))
+        in_cost    = (self.input_tokens  / 1_000_000) * in_price
+        out_cost   = (self.output_tokens / 1_000_000) * out_price
         total_cost = in_cost + out_cost
 
         usage_data = {
             "userId": user_id,
             "sessionId": session_id,
-            "model": "gemini-2.0-flash",
+            "model": active_model,
             "inputTokens": self.input_tokens,
             "outputTokens": self.output_tokens,
             "totalTokens": self.input_tokens + self.output_tokens,

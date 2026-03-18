@@ -147,16 +147,18 @@ INTERVIEW TYPE: HR / CULTURE FIT
 
 
 class InterviewGraph:
-    def __init__(self, api_key: str, model_name: str = "gemini-2.0-flash"):
+    def __init__(self, api_key: str, model_name: str = None):
+        from app.core.key_manager import key_manager
+        resolved_model = model_name or key_manager.get_gemini_model()
         # Lower temperature for evaluation → consistent, reliable scores
         self.eval_llm = ChatGoogleGenerativeAI(
-            model=model_name,
+            model=resolved_model,
             google_api_key=api_key,
             temperature=0.25,
         )
         # Standard temperature for question generation → natural, focused questions
         self.gen_llm = ChatGoogleGenerativeAI(
-            model=model_name,
+            model=resolved_model,
             google_api_key=api_key,
             temperature=0.4,
         )

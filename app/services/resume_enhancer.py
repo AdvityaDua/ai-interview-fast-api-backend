@@ -5,12 +5,18 @@ from google import genai
 from google.genai import types
 import httpx
 from app.core.config import settings
+from app.core.key_manager import key_manager
 from app.models.resume_schemas import ResumeAnalysisRequest, ResumeBuilderResponse
 
 class ResumeEnhancerService:
     def __init__(self):
-        self.api_key = settings.GOOGLE_API_KEY
-        self.client = genai.Client(api_key=self.api_key) if self.api_key else None
+        pass
+
+    def _get_client(self):
+        api_key = key_manager.get_gemini_key() or settings.GOOGLE_API_KEY
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY is not configured.")
+        return genai.Client(api_key=api_key)
         
     async def _report_usage(self, user_id: str, session_id: str, input_tokens: int, output_tokens: int):
         """Report token usage to the NestJS analytics backend."""
@@ -19,7 +25,7 @@ class ResumeEnhancerService:
         payload  = {
             "userId": user_id,
             "sessionId": session_id,
-            "model": "gemini-2.0-flash",
+            "model": key_manager.get_gemini_model(),
             "inputTokens": input_tokens,
             "outputTokens": output_tokens,
             "totalTokens": input_tokens + output_tokens,
@@ -38,8 +44,7 @@ class ResumeEnhancerService:
             print(f"[Resume] Failed to report usage: {type(e).__name__}: {e}")
 
     async def enhance_resume(self, request: ResumeAnalysisRequest, user: dict = None, raw_text: str = "") -> ResumeBuilderResponse:
-        if not self.client:
-            raise ValueError("GOOGLE_API_KEY is not configured.")
+        client = self._get_client()
             
         # Extract data directly or from nested resume object
         rd = request.resume if request.resume else request
@@ -77,8 +82,8 @@ class ResumeEnhancerService:
         - DO NOT hallucinate fake education, certifications, or experience. If the data is missing from ANALYSIS DATA or RAW RESUME TEXT, return empty lists for those fields.
         """
         
-        response = self.client.models.generate_content(
-            model='gemini-2.0-flash',
+        response = client.models.generate_content(
+            model=key_manager.get_gemini_model(),
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",

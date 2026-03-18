@@ -4,17 +4,18 @@ from google import genai
 from google.genai import types
 from typing import List, Optional
 from .schemas import QuestionEvaluation, FinalEvaluation, MidInterviewSnapshot
+from app.core.key_manager import key_manager
 
 class GeminiClient:
-    def __init__(self, api_key: str = None, model_name: str = "gemini-2.0-flash"):
+    def __init__(self, api_key: str = None, model_name: str = None):
         if not api_key:
-            api_key = os.getenv("GOOGLE_API_KEY")
+            api_key = key_manager.get_gemini_key() or os.getenv("GOOGLE_API_KEY")
         if not api_key:
-            raise ValueError("GOOGLE_API_KEY not found in environment variables")
+            raise ValueError("GOOGLE_API_KEY not found — set it in env or configure it via the admin panel")
         
         self.client = genai.Client(api_key=api_key)
         self.api_key = api_key
-        self.model_name = model_name
+        self.model_name = model_name or key_manager.get_gemini_model()
 
     async def summarize_context(self, resume_text: str, jd_text: str, interview_type: str = "technical", role: str = "", company: str = "", candidate_name: str = "") -> str:
         type_focus = {
