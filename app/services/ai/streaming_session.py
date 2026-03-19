@@ -338,6 +338,8 @@ class StreamingInterviewSession:
             "outputTokens": self.output_tokens,
             "totalTokens": self.input_tokens + self.output_tokens,
             "costUsd": total_cost,
+            "inputCostUsd": in_cost,
+            "outputCostUsd": out_cost,
             "subscriptionStatus": "free",  # Backend will refine from user DB
             "source": "interview",
             "interviewType": self.state.get("interview_type", ""),

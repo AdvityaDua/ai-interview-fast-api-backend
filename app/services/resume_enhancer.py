@@ -30,6 +30,8 @@ class ResumeEnhancerService:
             "outputTokens": output_tokens,
             "totalTokens": input_tokens + output_tokens,
             "costUsd": in_cost + out_cost,
+            "inputCostUsd": in_cost,
+            "outputCostUsd": out_cost,
             "subscriptionStatus": "free",
             "source": "resume",
             "interviewType": "",
