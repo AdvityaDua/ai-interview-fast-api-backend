@@ -75,12 +75,12 @@ def _max_questions_for_duration(duration_minutes: int) -> int:
     if duration_minutes <= 0:
         return 0        # unlimited
     if duration_minutes <= 15:
-        return 10       # 15 min  → up to 10 questions
+        return 8        # 15 min  → up to 8 questions
     if duration_minutes <= 30:
-        return 18       # 30 min  → up to 18 questions
+        return 13       # 30 min  → up to 13 questions
     if duration_minutes <= 45:
-        return 25       # 45 min  → up to 25 questions
-    return 30           # 60 min  → up to 30 questions
+        return 18       # 45 min  → up to 18 questions
+    return 22           # 60 min  → up to 22 questions
 
 
 def _max_questions_per_topic(duration_minutes: int) -> int:
