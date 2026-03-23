@@ -59,6 +59,9 @@ class InterviewState(TypedDict):
     # How many times to rephrase a confused question before moving on
     max_confusion_retries: int
 
+    # Track consecutive refused/off_topic to auto-terminate disengaged candidates
+    consecutive_disengaged: int
+
     # Token accounting
     input_tokens: int
     output_tokens: int
@@ -302,6 +305,13 @@ STEP 5 — follow_up_hint: specific gap to probe IF should_follow_up is true. Em
             else:
                 consecutive_non = 0  # end_requested / genuine / incomplete / coding_requested all reset the streak
 
+            # Track disengaged separately (refused + off_topic only — not confusion)
+            prev_disengaged = state.get("consecutive_disengaged", 0)
+            if data.answer_type in ("refused", "off_topic"):
+                consecutive_disengaged = prev_disengaged + 1
+            else:
+                consecutive_disengaged = 0
+
             return {
                 "performance_summary": data.new_summary,
                 "skills_covered": covered,
@@ -309,6 +319,7 @@ STEP 5 — follow_up_hint: specific gap to probe IF should_follow_up is true. Em
                 "follow_up_hint": data.follow_up_hint if data.should_follow_up else "",
                 "last_answer_type": data.answer_type,
                 "consecutive_non_answers": consecutive_non,
+                "consecutive_disengaged": consecutive_disengaged,
                 "topic_question_counts": topic_counts,
                 "max_confusion_retries": state.get("max_confusion_retries", 2),
                 "input_tokens": state.get("input_tokens", 0) + in_tok,
@@ -324,6 +335,7 @@ STEP 5 — follow_up_hint: specific gap to probe IF should_follow_up is true. Em
                 "follow_up_hint": "",
                 "last_answer_type": "genuine_answer",
                 "consecutive_non_answers": 0,
+                "consecutive_disengaged": 0,
                 "max_confusion_retries": state.get("max_confusion_retries", 2),
                 "input_tokens": state.get("input_tokens", 0),
                 "output_tokens": state.get("output_tokens", 0),
@@ -401,9 +413,24 @@ You MUST:
                 f"  Pick a DIFFERENT skill from SKILLS REMAINING that has NOT been exhausted.\n"
             )
 
+        # ── Early termination: candidate is not engaging ──
+        consecutive_disengaged = state.get("consecutive_disengaged", 0)
+        _DISENGAGEMENT_THRESHOLD = 3
+
         # ── Response-type routing (core new logic) ──
         routing_block = ""
-        if answer_type == "end_requested":
+        if consecutive_disengaged >= _DISENGAGEMENT_THRESHOLD and answer_type in ("refused", "off_topic"):
+            routing_block = f"""
+🛑 INTERVIEW MUST END — CANDIDATE IS NOT ENGAGING.
+The candidate has given {consecutive_disengaged} consecutive responses without any genuine attempt to answer.
+This indicates the candidate is not participating in good faith.
+You MUST:
+  1. Close the session professionally in 1–2 sentences — keep it respectful.
+  2. Briefly note that a productive conversation wasn’t possible this session.
+  3. Wish them well if they’d like to attempt this again with a fresh session.
+  4. Set action=END — this overrides ALL other instructions. Do NOT ask any new question.
+"""
+        elif answer_type == "end_requested":
             routing_block = """
 🛑 CANDIDATE HAS EXPLICITLY ASKED TO END THE INTERVIEW.
 You MUST do ALL of the following — no exceptions:
