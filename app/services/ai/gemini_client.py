@@ -4,20 +4,18 @@ from google import genai
 from google.genai import types
 from typing import List, Optional
 from .schemas import QuestionEvaluation, FinalEvaluation, MidInterviewSnapshot
-from app.core.key_manager import key_manager
 
 class GeminiClient:
-    def __init__(self, api_key: str = None, model_name: str = None):
+    def __init__(self, api_key: str = None, model_name: str = "gemini-2.0-flash"):
         if not api_key:
-            api_key = key_manager.get_gemini_key() or os.getenv("GOOGLE_API_KEY")
+            api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key:
-            raise ValueError("GOOGLE_API_KEY not found — set it in env or configure it via the admin panel")
+            raise ValueError("GOOGLE_API_KEY not found in environment variables")
         
         self.client = genai.Client(api_key=api_key)
-        self.api_key = api_key
-        self.model_name = model_name or key_manager.get_gemini_model()
+        self.model_name = model_name
 
-    async def summarize_context(self, resume_text: str, jd_text: str, interview_type: str = "technical", role: str = "", company: str = "", candidate_name: str = "") -> str:
+    async def summarize_context(self, resume_text: str, jd_text: str, interview_type: str = "technical", role: str = "", company: str = "") -> str:
         type_focus = {
             "technical": "Focus on: technical skills, programming languages, frameworks, system design experience, algorithms knowledge.",
             "behavioral": "Focus on: teamwork experiences, leadership examples, conflict resolution, communication skills, STAR-method scenarios.",
@@ -25,51 +23,29 @@ class GeminiClient:
             "hr": "Focus on: cultural fit, career goals, salary expectations, work-life balance views, motivation and passion.",
         }.get(interview_type, "Focus on: overall candidate assessment.")
 
-        has_jd = bool(jd_text and jd_text.strip())
-        jd_block = f"""
-        JOB DESCRIPTION (HIGH PRIORITY — questions must map to these requirements first):
-        {jd_text}
-        """ if has_jd else "JOB DESCRIPTION: Not provided."
-
-        jd_instruction = (
-            "⚠ JD IS PROVIDED: The interviewer MUST prioritise skills, technologies, "
-            "and responsibilities listed in the JD above everything else. "
-            "If a skill appears in the JD but not the resume, flag it clearly as a gap to probe. "
-            "Questions must validate the candidate against the JD requirements first, "
-            "then explore resume depth."
-        ) if has_jd else (
-            "No JD provided — base the interview entirely on the resume and role/company context."
-        )
-
         prompt = f"""
         You are an expert recruiter preparing for a {interview_type.upper()} interview round.
-        
-        TASK:
-        1. Extract the candidate's FULL NAME directly from the RESUME. If not found, use "{candidate_name or "the candidate"}".
-        2. Analyze the Resume and Job Description below.
-        3. Create a dense, information-rich summary for the interviewer.
-
-        {jd_instruction}
-
-        RESUME:
-        {resume_text}
-
-        {jd_block}
-        
         {f'The role is: {role}' if role else ''}
         {f'The company is: {company}' if company else ''}
+        
+        Analyze the following Resume and Job Description (JD). 
+        Create a dense, information-rich summary of under 2000 tokens.
         
         {type_focus}
         
         Output in the following sections ONLY:
-        IDENTIFIED NAME: [Strictly extract from resume]
         Candidate Profile
+        Matched Skills
+        Missing Skills
         Seniority Estimate
-        JD Required Skills: [Only if JD provided — list every explicit skill/tool/language the JD demands]
-        Matched Skills: [Skills present in BOTH resume and JD — mark these as HIGH PRIORITY to test]
-        Missing Skills: [Skills the JD requires but resume does NOT show — flag as gaps]
-        Key Projects and Experiences
-        Interview Focus Areas (tailored for {interview_type} round — JD requirements come first)
+        Key Projects
+        Interview Focus Areas (tailored for {interview_type} round)
+
+        RESUME:
+        {resume_text}
+
+        JOB DESCRIPTION:
+        {jd_text}
         """
         
         response = await asyncio.to_thread(
@@ -77,15 +53,7 @@ class GeminiClient:
             model=self.model_name,
             contents=prompt
         )
-        
-        # Return both text and usage info
-        usage = {"input_tokens": 0, "output_tokens": 0}
-        if hasattr(response, 'usage_metadata'):
-            usage["input_tokens"] = getattr(response.usage_metadata, 'prompt_token_count', 0)
-            usage["output_tokens"] = getattr(response.usage_metadata, 'candidates_token_count', 0)
-            print(f"[GeminiClient] summarize_context usage: in={usage['input_tokens']}, out={usage['output_tokens']}")
-        
-        return response.text, usage
+        return response.text
 
     async def generate_question(self, history: List[dict], context_summary: str, interview_type: str = "technical", time_context: str = "") -> QuestionEvaluation:
         prompt_history = "INTERVIEW HISTORY:\n"
@@ -167,13 +135,11 @@ class GeminiClient:
         3.  Generate the next question if continuing.
         
         RULES:
-        -   Start with a greeting and an initial question if the history is empty. IMPORTANT: In your very first message, you MUST greet the candidate by their actual name if it is available in the CONTEXT SUMMARY (e.g. "Hi [Name], thank you for joining...").
+        -   Start with a greeting and an initial question if the history is empty.
         -   Be professional, encouraging, but rigorous.
         -   If the candidate struggles, offer a small hint or move to a simpler related topic.
         -   If the candidate answers well, increase difficulty.
         -   Ensure coverage of key skills from the JD.
-        -   Set 'is_coding_question' in the 'next_step' to true if and only if the next question requires the candidate to write or modify code in the provided code editor. Otherwise, set it to false.
-
         
         OUTPUT FORMAT:
         You must return a JSON object strictly adhering to the schema.
@@ -196,17 +162,11 @@ class GeminiClient:
 
     async def generate_feedback(self, history: List[dict], context_summary: str) -> FinalEvaluation:
         prompt_history = "INTERVIEW HISTORY:\n"
-        user_msg_count = 0
         for turn in history:
             role = turn['role']
-            if role == 'user' or role == 'candidate':
-                user_msg_count += 1
             content = turn['content']
             prompt_history += f"{role.upper()}: {content}\n"
-            
-        if user_msg_count == 0:
-            raise ValueError("Insufficient Data: The candidate did not answer any questions during the interview. No meaningful evaluation can be generated.")
-            
+
         prompt = f"""
         You are an expert technical interviewer. The interview has ended.
         Provide a comprehensive final evaluation of the candidate.
@@ -217,17 +177,11 @@ class GeminiClient:
         {prompt_history}
         
         IMPORTANT INSTRUCTIONS:
-        - DO NOT MAKE UP OR HALLUCINATE ANY DATA. ONLY EVALUATE BASED ON THE ACTUAL CONVERSATION HISTORY. If the candidate answered very little, strictly mention that the candidate did not provide enough details, and score them accordingly.
         - You MUST include EVERY SINGLE question you asked during the interview as a separate entry in question_wise_analysis.
         - Do NOT consolidate or merge questions. Each question gets its own entry.
         - Number the question_ids sequentially starting from 1.
-        - The overall_score in summary should be out of 100. IMPORTANT: Do NOT simply take the mathematical average of individual question scores.
-        - The overall_score should be a holistic assessment of the candidate's readiness for the role.
-        - Prioritize core technical skills and problem-solving over greetings or simple introductory questions.
-        - If the candidate performed exceptionally on difficult topics but missed minor points, the overall_score should reflect that high level of skill.
-        - Conversely, if the candidate failed core role requirements from the JD, the overall_score should reflect that lack of readiness, even if they answered other questions correctly.
+        - The overall_score in summary should be out of 100.
         - Each individual question score should be out of 10.
-
         - For the IMPROVEMENT PLAN, you MUST provide:
             1. immediate_actions: Things to do in the next 24-48 hours.
             2. 1_week_plan: Focused study and practice for the next 7 days.
@@ -246,16 +200,7 @@ class GeminiClient:
                 "response_schema": FinalEvaluation,
             },
         )
-        
-        # Track token usage for final feedback generation
-        usage = {"input_tokens": 0, "output_tokens": 0}
-        if hasattr(response, 'usage_metadata'):
-            usage["input_tokens"] = getattr(response.usage_metadata, 'prompt_token_count', 0)
-            usage["output_tokens"] = getattr(response.usage_metadata, 'candidates_token_count', 0)
-            print(f"[GeminiClient] generate_feedback usage: in={usage['input_tokens']}, out={usage['output_tokens']}")
-        
-        evaluation = FinalEvaluation.model_validate_json(response.text)
-        return evaluation, usage
+        return FinalEvaluation.model_validate_json(response.text)
 
     def connect_live(self, system_instruction: str):
         # Configuration aligning with user snippet where possible, while maintaining our features

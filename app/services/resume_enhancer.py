@@ -1,52 +1,18 @@
 import json
-import uuid
 from typing import Optional, List, Any
 from google import genai
 from google.genai import types
-import httpx
 from app.core.config import settings
-from app.core.key_manager import key_manager
 from app.models.resume_schemas import ResumeAnalysisRequest, ResumeBuilderResponse
 
 class ResumeEnhancerService:
     def __init__(self):
-        pass
-
-    def _get_client(self):
-        api_key = key_manager.get_gemini_key() or settings.GOOGLE_API_KEY
-        if not api_key:
-            raise ValueError("GOOGLE_API_KEY is not configured.")
-        return genai.Client(api_key=api_key)
+        self.api_key = settings.GOOGLE_API_KEY
+        self.client = genai.Client(api_key=self.api_key) if self.api_key else None
         
-    async def _report_usage(self, user_id: str, session_id: str, input_tokens: int, output_tokens: int):
-        """Report token usage to the NestJS analytics backend."""
-        in_cost  = (input_tokens  / 1_000_000) * 0.10
-        out_cost = (output_tokens / 1_000_000) * 0.40
-        payload  = {
-            "userId": user_id,
-            "sessionId": session_id,
-            "model": key_manager.get_gemini_model(),
-            "inputTokens": input_tokens,
-            "outputTokens": output_tokens,
-            "totalTokens": input_tokens + output_tokens,
-            "costUsd": in_cost + out_cost,
-            "inputCostUsd": in_cost,
-            "outputCostUsd": out_cost,
-            "subscriptionStatus": "free",
-            "source": "resume",
-            "interviewType": "",
-        }
-        url = f"{settings.BACKEND_URL}/analytics/ai-usage"
-        print(f"[Resume] POSTing usage to {url}  payload={payload}")
-        try:
-            async with httpx.AsyncClient() as client:
-                r = await client.post(url, json=payload, timeout=5.0)
-            print(f"[Resume] analytics POST status={r.status_code} body={r.text[:200]}")
-        except Exception as e:
-            print(f"[Resume] Failed to report usage: {type(e).__name__}: {e}")
-
     async def enhance_resume(self, request: ResumeAnalysisRequest, user: dict = None, raw_text: str = "") -> ResumeBuilderResponse:
-        client = self._get_client()
+        if not self.client:
+            raise ValueError("GOOGLE_API_KEY is not configured.")
             
         # Extract data directly or from nested resume object
         rd = request.resume if request.resume else request
@@ -84,8 +50,8 @@ class ResumeEnhancerService:
         - DO NOT hallucinate fake education, certifications, or experience. If the data is missing from ANALYSIS DATA or RAW RESUME TEXT, return empty lists for those fields.
         """
         
-        response = client.models.generate_content(
-            model=key_manager.get_gemini_model(),
+        response = self.client.models.generate_content(
+            model='gemini-2.0-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -94,20 +60,6 @@ class ResumeEnhancerService:
             )
         )
         
-        # Report token usage — await directly since we're already in async context
-        um = getattr(response, 'usage_metadata', None)
-        print(f"[Resume] usage_metadata raw: {um}  attrs={dir(um) if um else 'N/A'}")
-        input_tokens  = getattr(um, 'prompt_token_count',     0) if um else 0
-        output_tokens = getattr(um, 'candidates_token_count', 0) if um else 0
-        # Fallback: some SDK versions use total_token_count when candidates_token_count is 0
-        if output_tokens == 0 and um:
-            output_tokens = getattr(um, 'total_token_count', 0) - input_tokens
-        print(f"[Resume] Gemini usage: in={input_tokens}, out={output_tokens}  user={user}")
-
-        user_id    = str(user.get('sub') or user.get('_id') or user.get('id', 'anonymous')) if user else 'anonymous'
-        session_id = f"resume_{user_id}_{uuid.uuid4().hex[:10]}"
-        await self._report_usage(user_id, session_id, input_tokens, output_tokens)
-
         # Parse and validate the response
         return ResumeBuilderResponse.model_validate_json(response.text)
 

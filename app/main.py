@@ -1,42 +1,13 @@
 import uvicorn
-from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings, API_DESCRIPTION, TAGS_METADATA
-from app.core.key_manager import key_manager
 from app.core.middleware import AuthMiddleware
 from app.api.v1.router import api_router
 from app.api.v1.ws_interview import ws_router as interview_ws_router
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # ── Startup ──────────────────────────────────────────────────────────────
-    print("=" * 60)
-    print(f"[CONFIG] BACKEND_URL  = {settings.BACKEND_URL}")
-    print(f"[CONFIG] HOST:PORT    = {settings.HOST}:{settings.PORT}")
-    print(f"[CONFIG] REDIS_URL    = {settings.REDIS_URL}")
-    # Fetch active API keys from NestJS admin DB (falls back to env vars)
-    # Then start a background loop that re-fetches every 60s so admin key
-    # changes are picked up without restarting the service.
-    await key_manager.refresh(settings.BACKEND_URL)
-    key_manager.start_auto_refresh(settings.BACKEND_URL)
-    google_ok   = "✓ set" if key_manager.get_gemini_key() else "✗ MISSING"
-    groq_ok     = "✓ set" if key_manager.get_groq_key()   else "✗ MISSING"
-    deepgram_ok = "✓ set" if settings.DEEPGRAM_KEY else "✗ MISSING"
-    print(f"[CONFIG] GOOGLE_API_KEY = {google_ok}")
-    print(f"[CONFIG] GROQ_API_KEY   = {groq_ok}")
-    print(f"[CONFIG] DEEPGRAM_KEY   = {deepgram_ok}")
-    if "localhost" in settings.BACKEND_URL:
-        print("[WARNING] BACKEND_URL points to localhost — token reporting will FAIL in production!")
-        print("[WARNING] Set BACKEND_URL env var to your production NestJS URL.")
-    print("=" * 60)
-    yield
-    # ── Shutdown ─────────────────────────────────────────────────────────────
-    key_manager.stop_auto_refresh()
-
 def create_app() -> FastAPI:
     app = FastAPI(
-        lifespan=lifespan,
         title="AI Interview Coach Backend",
         description=API_DESCRIPTION,
         version="2.0.0",
@@ -49,11 +20,10 @@ def create_app() -> FastAPI:
     # Configure CORS - added after Auth so it wraps it as the outermost layer
     app.add_middleware(
         CORSMiddleware,
-        allow_origin_regex=".*",
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000", "https://aiforjob.ai", "https://www.aiforjob.ai", "https://api.aiforjob.ai", "https://www.api.aiforjob.ai"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["*"],
     )
 
     # Include API Routers

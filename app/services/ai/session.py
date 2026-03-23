@@ -15,7 +15,7 @@ class InterviewSession:
 
     async def initialize_session(self, resume_text: str, jd_text: str):
         """Generates context summary to start the session."""
-        self.context_summary, _ = await self.client.summarize_context(resume_text, jd_text)
+        self.context_summary = await self.client.summarize_context(resume_text, jd_text)
     
     async def process_user_input(self, user_response: Optional[str] = None) -> QuestionEvaluation:
         """
@@ -52,5 +52,4 @@ class InterviewSession:
 
     async def generate_final_report(self) -> FinalEvaluation:
         """Generates the final feedback report."""
-        feedback, usage = await self.client.generate_feedback(self.history, self.context_summary)
-        return feedback
+        return await self.client.generate_feedback(self.history, self.context_summary)

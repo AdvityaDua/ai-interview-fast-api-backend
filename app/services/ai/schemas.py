@@ -89,17 +89,6 @@ class NextStep(BaseModel):
     difficulty: Difficulty
     question: str
     target_skill: str
-    is_coding_question: bool = Field(
-        False,
-        description=(
-            "True ONLY when the question explicitly asks the candidate to WRITE or TYPE actual code/syntax in the editor. "
-            "Examples that are TRUE: 'Implement a function that...', 'Write a solution for...', 'Code a component that...'. "
-            "Examples that are FALSE (MUST be false): 'Describe how you optimized...', 'Tell me about a project...', "
-            "'Explain your approach to...', 'What techniques did you use...', 'Walk me through...', "
-            "ANY question that starts with Describe/Explain/Tell/Walk/What/How/Why. "
-            "If the question asks them to TALK or EXPLAIN, this is false. Only set true when they must TYPE code."
-        )
-    )
 
 class QuestionEvaluation(BaseModel):
     """Schema for the model's response after every user turn."""
@@ -108,54 +97,6 @@ class QuestionEvaluation(BaseModel):
     coverage_update: Optional[CoverageUpdate] = None
     decision: Decision
     next_step: NextStep
-
-# --- 1b. Evaluate-Turn Structured Output (replaces fragile regex parsing) ---
-
-class EvaluateTurnOutput(BaseModel):
-    """Structured output from the evaluate_turn graph node."""
-    new_summary: str = Field(
-        ...,
-        description=(
-            "Updated performance summary (max 600 words). Must capture: what the candidate "
-            "said well, what they missed, their overall trajectory, and precise detail on "
-            "which skills they demonstrated. Be specific — mention actual terms/concepts they used."
-        )
-    )
-    newly_covered_skills: List[str] = Field(
-        default_factory=list,
-        description="Skills the candidate clearly demonstrated in THIS answer (match names from skills_remaining list)."
-    )
-    answer_quality: str = Field(
-        ...,
-        description="Exactly one of: strong | adequate | weak | incorrect | not_applicable"
-    )
-    answer_type: str = Field(
-        "genuine_answer",
-        description=(
-            "Classify the NATURE of the candidate's response. Exactly one of:\n"
-            "  genuine_answer   — candidate actually attempted to answer\n"
-            "  confused         — candidate said they don't understand / asked for clarification\n"
-            "  refused          — candidate declined to answer or said they don't want to\n"
-            "  off_topic        — candidate answered something unrelated\n"
-            "  incomplete       — candidate started but gave only a fragment\n"
-            "  wait_requested   — candidate asked for a moment / said they are still thinking (e.g. 'give me a sec', 'I'm thinking', 'just a moment')\n"
-            "  end_requested    — candidate explicitly asked to stop, end, quit, or leave the interview\n"
-            "  not_applicable   — opening greeting or first turn with no question yet"
-        )
-    )
-    should_follow_up: bool = Field(
-        False,
-        description="True if the answer was weak or incorrect (not confused/refused) and the interviewer should probe before moving on."
-    )
-    follow_up_hint: str = Field(
-        "",
-        description="Concise note on what the follow-up should target (e.g. 'candidate did not explain time complexity'). Empty if not needed."
-    )
-    confidence_in_candidate: str = Field(
-        "medium",
-        description="Exactly one of: low | medium | high — overall trend so far."
-    )
-
 
 # --- 2. Mid-Interview Snapshot Schema ---
 

@@ -1,5 +1,4 @@
 from pydantic_settings import BaseSettings
-from typing import Optional
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Prod-Grade FastAPI Backend"
@@ -7,13 +6,11 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     PORT: int = 8001
     HOST: str = "0.0.0.0"
-    # Optional — keys are fetched from NestJS admin DB at runtime; env vars are fallback
-    GOOGLE_API_KEY: Optional[str] = None
+    GOOGLE_API_KEY: str
     DEEPGRAM_KEY: str
-    GROQ_API_KEY: Optional[str] = None
+    GROQ_API_KEY: str
     REDIS_URL: str = "redis://localhost:6379"
     PISTON_URL: str = "http://localhost:2000"
-    BACKEND_URL: str = "https://api.aiforjob.ai"
 
     class Config:
         env_file = ".env"
