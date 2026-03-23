@@ -10,12 +10,27 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 class LLMScorer:
-    def __init__(self, client=None, model="llama-3.1-8b-instant", temperature=0.0, timeout=60):
+    def __init__(self, client=None, model=None, temperature=0.0, timeout=60):
         from groq import Groq
-        self.client = client or Groq()
-        self.model = model
+        from app.core.key_manager import key_manager
+        groq_key = key_manager.get_groq_key() or os.getenv("GROQ_API_KEY")
+        self.client = client or (Groq(api_key=groq_key) if groq_key else Groq())
+        self.model = model or key_manager.get_groq_model()
         self.temperature = temperature
         self.timeout = timeout
+        # Cumulative token counters — reset per upload request
+        self.total_input_tokens  = 0
+        self.total_output_tokens = 0
+
+    def reset_usage(self) -> None:
+        self.total_input_tokens  = 0
+        self.total_output_tokens = 0
+
+    def get_usage(self) -> dict:
+        return {
+            "input_tokens":  self.total_input_tokens,
+            "output_tokens": self.total_output_tokens,
+        }
 
     # ---------- CV vs JD (auto-switch) ----------
     def unified_evaluate(self, cv_text: str, jd_text: str = "") -> dict:
@@ -45,6 +60,11 @@ class LLMScorer:
                     temperature=self.temperature,
                     max_tokens=3500,
                 )
+                # Accumulate Groq token usage
+                if hasattr(resp, 'usage') and resp.usage:
+                    self.total_input_tokens  += getattr(resp.usage, 'prompt_tokens',     0)
+                    self.total_output_tokens += getattr(resp.usage, 'completion_tokens', 0)
+                    print(f"[CV-Eval] Groq call tokens: in={resp.usage.prompt_tokens}, out={resp.usage.completion_tokens}  cumulative: in={self.total_input_tokens}, out={self.total_output_tokens}")
                 return resp.choices[0].message.content.strip()
             except Exception as e:
                 logger.error(f"Groq API call failed (attempt {attempt+1}/3): {e}")

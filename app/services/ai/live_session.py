@@ -14,7 +14,7 @@ class LiveInterviewSession:
         self.resume_text = resume_text
         self.jd_text = jd_text
         # We might generate the context summary first using the standard client
-        self.context_summary = await self.client.summarize_context(resume_text, jd_text)
+        self.context_summary, _ = await self.client.summarize_context(resume_text, jd_text)
 
     async def start_session(self, websocket, manager):
         """

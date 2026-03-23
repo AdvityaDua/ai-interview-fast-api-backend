@@ -21,7 +21,7 @@ class AuthMiddleware:
         path = scope.get("path", "")
 
         # 3. Bypass unprotected paths (including OPTIONS preflight)
-        unprotected_paths = ["/docs", "/openapi.json", "/redoc", "/api/v1/health", "/api/v1/interview/", "/api/v1/code/"]
+        unprotected_paths = ["/docs", "/openapi.json", "/redoc", "/api/v1/health", "/api/v1/interview/", "/api/v1/code/", "/api/v1/match", "/api/v1/docs/seed"]
         if method == "OPTIONS" or any(path.startswith(p) for p in unprotected_paths):
             await self.app(scope, receive, send)
             return
@@ -41,8 +41,15 @@ class AuthMiddleware:
         token = auth_header.split(" ")[1]
         try:
             payload = verify_jwt_token(token)
-            # Store payload in scope for @Depends(get_current_user)
-            scope["state"] = {**scope.get("state", {}), "user": payload}
+            # Starlette's scope["state"] starts as a plain dict in ASGI.
+            # Store the JWT payload there so get_current_user can read it via
+            # request.scope["state"]["user"].
+            existing = scope.get("state", {})
+            if isinstance(existing, dict):
+                scope["state"] = {**existing, "user": payload}
+            else:
+                # If Starlette has already created a State object, set as attribute
+                existing.user = payload
         except Exception as e:
             response = JSONResponse(status_code=401, content={"detail": f"Auth failed: {str(e)}"})
             await response(scope, receive, send)

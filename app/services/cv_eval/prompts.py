@@ -160,6 +160,7 @@ Return ONLY valid JSON that strictly adheres to the schema provided at the end. 
 ### INSTRUCTIONS
 
 **1. Tailored Resume**
+- Extract **personal_info** (name, email, phone, etc.) directly from the CV.
 - Rewrite the CV’s **summary** in language tailored to the JD.
 - Reframe **experience bullets** to match the JD’s phrasing and highlight achievements.
 - Reorder and prioritize **skills** relevant to the JD.
@@ -191,6 +192,15 @@ Job Description:
 
 {{
   "tailored_resume": {{
+    "personal_info": {{
+      "name": "Full Name",
+      "email": "Email Address",
+      "phone": "Phone Number",
+      "location": "City, Country",
+      "linkedin": "linkedin.com/in/username",
+      "github": "github.com/username",
+      "website": "portfolio.com"
+    }},
     "summary": "revised summary here",
     "experience": ["reframed bullet 1", "reframed bullet 2"],
     "skills": ["skill1", "skill2"],
@@ -214,6 +224,7 @@ Return ONLY valid JSON that strictly adheres to the schema provided at the end. 
 ### INSTRUCTIONS
 
 **1. Tailored Resume**
+- Extract **personal_info** (name, email, phone, etc.) directly from the CV.
 - Rewrite the CV’s **summary** in stronger, impact-driven language.
 - Reframe **experience bullets** to highlight achievements and quantified impact.
 - Reorder and prioritize **skills** based on general industry relevance.
@@ -241,6 +252,15 @@ CV:
 
 {{
   "tailored_resume": {{
+    "personal_info": {{
+      "name": "Full Name",
+      "email": "Email Address",
+      "phone": "Phone Number",
+      "location": "City, Country",
+      "linkedin": "linkedin.com/in/username",
+      "github": "github.com/username",
+      "website": "portfolio.com"
+    }},
     "summary": "revised summary here",
     "experience": ["reframed bullet 1", "reframed bullet 2"],
     "skills": ["skill1", "skill2"],
