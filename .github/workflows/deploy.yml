@@ -1,0 +1,47 @@
+name: Deploy Backend (PM2)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to VM
+        run: |
+          ssh ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} << 'EOF'
+
+            set -e
+
+            echo "🚀 Starting deployment..."
+
+            # -------------------------
+            # FASTAPI APP
+            # -------------------------
+            cd /var/www/ai-backend  # ⚠️ change path if needed
+
+            echo "📥 Pulling latest code..."
+            git pull origin main
+
+            echo "🐍 Activating venv..."
+            source venv/bin/activate
+
+            echo "📦 Installing dependencies..."
+            pip install -r requirements.txt
+
+            echo "🔁 Restarting FastAPI (PM2)..."
+            pm2 restart 3
+
+            echo "✅ Deployment successful!"
+
+          EOF
