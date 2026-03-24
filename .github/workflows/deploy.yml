@@ -1,4 +1,4 @@
-name: Deploy Backend (PM2)
+name: Deploy AI Backend (PM2)
 
 on:
   push:
