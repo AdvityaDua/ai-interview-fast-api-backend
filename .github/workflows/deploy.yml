@@ -12,50 +12,56 @@ jobs:
     steps:
       - name: Setup SSH
         run: |
-          set -x   # show commands
+          set -e
           mkdir -p ~/.ssh
-          printf "%s\n" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 700 ~/.ssh
+
+          # Write key safely
+          printf "%s\n" "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts
 
-          echo "---- SSH FILES ----"
-          ls -la ~/.ssh
+          echo "---- KEY HEADER/FOOTER CHECK ----"
+          head -1 ~/.ssh/id_ed25519
+          tail -1 ~/.ssh/id_ed25519
 
-      - name: Test SSH Connection (DEBUG)
+          ssh-keygen -l -f ~/.ssh/id_ed25519 && echo "✅ Key is valid" || echo "❌ Key is INVALID"
+
+          ssh-keyscan -T 10 -H "${{ secrets.VM_HOST }}" >> ~/.ssh/known_hosts 2>&1
+
+      - name: Test SSH Connection
         run: |
-          set -x
-          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -v ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "echo ✅ SSH connected"
+          ssh -v \
+            -i ~/.ssh/id_ed25519 \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=10 \
+            "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" \
+            "echo '✅ SSH connected as:' && whoami"
 
       - name: Deploy to VM
         run: |
-          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} << 'EOF'
+          ssh -i ~/.ssh/id_ed25519 \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=10 \
+            "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" \
+            'bash -s' << 'ENDSSH'
 
-            set -ex   # VERY IMPORTANT: show commands + fail on error
+            set -ex
 
             echo "🚀 Starting deployment..."
+            echo "👤 User: $(whoami)"
+            echo "📁 Dir:  $(pwd)"
+            echo "📂 /var/www:" && ls -la /var/www
 
-            echo "👤 Current user:"
-            whoami
-
-            echo "📁 Current dir:"
-            pwd
-
-            echo "📂 Listing /var/www:"
-            ls -la /var/www
-
-            # -------------------------
-            # FASTAPI APP
-            # -------------------------
             cd /var/www/ai-backend
-
-            echo "📂 Project files:"
-            ls -la
 
             echo "📥 Pulling latest code..."
             git pull origin main
 
             echo "🐍 Checking venv..."
-            ls -la venv || echo "❌ venv missing"
+            if [ ! -d venv ]; then
+              echo "❌ venv missing — creating one..."
+              python3 -m venv venv
+            fi
 
             echo "📦 Installing dependencies..."
             /var/www/ai-backend/venv/bin/pip install -r requirements.txt
@@ -64,14 +70,17 @@ jobs:
             /usr/bin/pm2 list
 
             echo "🔁 Restarting FastAPI..."
-            /usr/bin/pm2 restart fastapi-app || /usr/bin/pm2 start "/var/www/ai-backend/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000" --name fastapi-app --cwd /var/www/ai-backend
+            /usr/bin/pm2 restart fastapi-app || /usr/bin/pm2 start \
+              "/var/www/ai-backend/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000" \
+              --name fastapi-app \
+              --cwd /var/www/ai-backend
 
             echo "📊 PM2 after restart:"
             /usr/bin/pm2 list
 
-            echo "📜 Last logs:"
-            /usr/bin/pm2 logs fastapi-app --lines 20 || true
+            echo "📜 Logs:"
+            /usr/bin/pm2 logs fastapi-app --lines 20 --nostream || true
 
-            echo "✅ Deployment successful!"
+            echo "✅ Deployment complete!"
 
-          EOF
+          ENDSSH
