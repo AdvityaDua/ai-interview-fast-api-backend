@@ -12,35 +12,65 @@ jobs:
     steps:
       - name: Setup SSH
         run: |
+          set -x   # show commands
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          printf "%s\n" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts
 
+          echo "---- SSH FILES ----"
+          ls -la ~/.ssh
+
+      - name: Test SSH Connection (DEBUG)
+        run: |
+          set -x
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -v ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "echo ✅ SSH connected"
+
       - name: Deploy to VM
         run: |
-          ssh ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} << 'EOF'
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} << 'EOF'
 
-            set -e
+            set -ex   # VERY IMPORTANT: show commands + fail on error
 
             echo "🚀 Starting deployment..."
+
+            echo "👤 Current user:"
+            whoami
+
+            echo "📁 Current dir:"
+            pwd
+
+            echo "📂 Listing /var/www:"
+            ls -la /var/www
 
             # -------------------------
             # FASTAPI APP
             # -------------------------
-            cd /var/www/ai-backend  # ⚠️ change path if needed
+            cd /var/www/ai-backend
+
+            echo "📂 Project files:"
+            ls -la
 
             echo "📥 Pulling latest code..."
             git pull origin main
 
-            echo "🐍 Activating venv..."
-            source venv/bin/activate
+            echo "🐍 Checking venv..."
+            ls -la venv || echo "❌ venv missing"
 
             echo "📦 Installing dependencies..."
-            pip install -r requirements.txt
+            /var/www/ai-backend/venv/bin/pip install -r requirements.txt
 
-            echo "🔁 Restarting FastAPI (PM2)..."
-            pm2 restart 3
+            echo "📊 PM2 before restart:"
+            /usr/bin/pm2 list
+
+            echo "🔁 Restarting FastAPI..."
+            /usr/bin/pm2 restart fastapi-app || /usr/bin/pm2 start "/var/www/ai-backend/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000" --name fastapi-app --cwd /var/www/ai-backend
+
+            echo "📊 PM2 after restart:"
+            /usr/bin/pm2 list
+
+            echo "📜 Last logs:"
+            /usr/bin/pm2 logs fastapi-app --lines 20 || true
 
             echo "✅ Deployment successful!"
 
