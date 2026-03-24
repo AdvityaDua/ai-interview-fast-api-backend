@@ -55,6 +55,7 @@ jobs:
             cd /var/www/ai-backend
 
             echo "📥 Pulling latest code..."
+            git config --global --add safe.directory /var/www/ai-backend
             git pull origin main
 
             echo "🐍 Checking venv..."
