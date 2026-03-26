@@ -44,13 +44,13 @@ async def _report_cv_token_usage(request: Request, usage: dict, source: str = "c
     except Exception:
         pass
 
-    in_cost  = (input_tokens  / 1_000_000) * 0.05   # Groq llama-3.1-8b pricing
-    out_cost = (output_tokens / 1_000_000) * 0.08
+    in_cost  = (input_tokens  / 1_000_000) * 0.10   # Gemini 1.5/2.0 Flash pricing
+    out_cost = (output_tokens / 1_000_000) * 0.40
     session_id = f"{source}_{user_id}_{uuid.uuid4().hex[:10]}"
     payload = {
         "userId":             user_id,
         "sessionId":          session_id,
-        "model":              "llama-3.1-8b-instant",
+        "model":              key_manager.get_gemini_model(),
         "inputTokens":        input_tokens,
         "outputTokens":       output_tokens,
         "totalTokens":        input_tokens + output_tokens,
@@ -61,7 +61,7 @@ async def _report_cv_token_usage(request: Request, usage: dict, source: str = "c
         "source":             source,
         "interviewType":      "",
     }
-    print(f"[CV-Upload] Reporting {source} usage to analytics: in={input_tokens}, out={output_tokens}, user={user_id}")
+    print(f"[CV-Upload] Reporting {source} usage to analytics (Gemini): in={input_tokens}, out={output_tokens}, user={user_id}")
     try:
         async with httpx.AsyncClient() as client:
             r = await client.post(

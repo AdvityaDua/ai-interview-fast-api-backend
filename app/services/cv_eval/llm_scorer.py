@@ -6,16 +6,22 @@ from dotenv import load_dotenv
 from .prompts import UNIFIED_EVALUATION_PROMPT, CV_ONLY_EVALUATION_PROMPT, IMPROVEMENT_PROMPT, CV_ONLY_IMPROVEMENT_PROMPT
 
 
+from google import genai
+from google.genai import types
+from app.core.key_manager import key_manager
+
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 class LLMScorer:
     def __init__(self, client=None, model=None, temperature=0.0, timeout=60):
-        from groq import Groq
-        from app.core.key_manager import key_manager
-        groq_key = key_manager.get_groq_key() or os.getenv("GROQ_API_KEY")
-        self.client = client or (Groq(api_key=groq_key) if groq_key else Groq())
-        self.model = model or key_manager.get_groq_model()
+        api_key = key_manager.get_gemini_key() or os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY is not configured.")
+        
+        self.client = client or genai.Client(api_key=api_key)
+        self.model = model or key_manager.get_gemini_model()
         self.temperature = temperature
         self.timeout = timeout
         # Cumulative token counters — reset per upload request
@@ -51,23 +57,30 @@ class LLMScorer:
     def _call_llm(self, prompt: str) -> str:
         for attempt in range(3):
             try:
-                resp = self.client.chat.completions.create(
+                resp = self.client.models.generate_content(
                     model=self.model,
-                    messages=[
-                        {"role": "system", "content": "You are a strict JSON generator."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=self.temperature,
-                    max_tokens=3500,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction="You are a strict JSON generator.",
+                        temperature=self.temperature,
+                        max_output_tokens=3500,
+                        response_mime_type="application/json",
+                    )
                 )
-                # Accumulate Groq token usage
-                if hasattr(resp, 'usage') and resp.usage:
-                    self.total_input_tokens  += getattr(resp.usage, 'prompt_tokens',     0)
-                    self.total_output_tokens += getattr(resp.usage, 'completion_tokens', 0)
-                    print(f"[CV-Eval] Groq call tokens: in={resp.usage.prompt_tokens}, out={resp.usage.completion_tokens}  cumulative: in={self.total_input_tokens}, out={self.total_output_tokens}")
-                return resp.choices[0].message.content.strip()
+                # Accumulate Gemini token usage
+                um = getattr(resp, 'usage_metadata', None)
+                if um:
+                    in_tokens  = getattr(um, 'prompt_token_count',     0)
+                    out_tokens = getattr(um, 'candidates_token_count', 0)
+                    if out_tokens == 0:
+                        out_tokens = getattr(um, 'total_token_count', 0) - in_tokens
+
+                    self.total_input_tokens  += in_tokens
+                    self.total_output_tokens += out_tokens
+                    print(f"[CV-Eval] Gemini call tokens: in={in_tokens}, out={out_tokens}  cumulative: in={self.total_input_tokens}, out={self.total_output_tokens}")
+                return resp.text.strip()
             except Exception as e:
-                logger.error(f"Groq API call failed (attempt {attempt+1}/3): {e}")
+                logger.error(f"Gemini API call failed (attempt {attempt+1}/3): {e}")
                 if attempt == 2:
                     raise
                 time.sleep(1.5 ** attempt)
