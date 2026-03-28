@@ -10,6 +10,7 @@ import pytesseract
 
 from app.core.config import settings
 from app.core.security import verify_jwt_token
+from app.core.key_manager import key_manager
 from app.services.cv_eval.evaluation_engine import evaluation_engine
 from app.services.cv_eval.improvement_engine import Improvement
 

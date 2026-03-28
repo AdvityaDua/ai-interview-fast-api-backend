@@ -77,9 +77,22 @@ class KeyManager:
     def get_groq_key(self) -> str:
         return self._groq or os.getenv("GROQ_API_KEY", "")
 
+    # Verified models that support generateContent (run list_gemini_models.py to refresh)
+    VALID_GEMINI_MODELS = {
+        "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite",
+        "gemini-2.0-flash", "gemini-2.0-flash-001", "gemini-2.0-flash-lite", "gemini-2.0-flash-lite-001",
+        "gemini-1.5-flash", "gemini-1.5-flash-001", "gemini-1.5-pro",
+    }
+    DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+
     def get_gemini_model(self) -> str:
-        """Returns the admin-configured Gemini model, falling back to the cost-effective default."""
-        return self._gemini_model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        """Returns the admin-configured Gemini model, validated against a whitelist."""
+        model = self._gemini_model or os.getenv("GEMINI_MODEL", "")
+        if model and model in self.VALID_GEMINI_MODELS:
+            return model
+        if model:
+            logger.warning(f"[KeyManager] Model '{model}' is not in the verified whitelist, falling back to '{self.DEFAULT_GEMINI_MODEL}'")
+        return self.DEFAULT_GEMINI_MODEL
 
     def get_groq_model(self) -> str:
         """Returns the admin-configured Groq model, falling back to the cost-effective default."""
@@ -88,3 +101,4 @@ class KeyManager:
 
 # Global singleton
 key_manager = KeyManager()
+

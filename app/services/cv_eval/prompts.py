@@ -3,45 +3,45 @@ Prompt templates for LLM scoring.
 These are kept in a separate file so the logic is cleanly separated from engine/scorer code.
 """
 
-UNIFIED_EVALUATION_PROMPT = """You are an expert hiring evaluator. Your task is to analyze a Candidate CV against a Job Description and return a detailed scoring analysis.
+UNIFIED_EVALUATION_PROMPT = """You are an expert recruitment specialist with a balanced, professional perspective. Your task is to provide a fair and thorough analysis of a Candidate CV against a Job Description.
 
-Return ONLY valid JSON that strictly adheres to the schema provided at the end. Do NOT include explanations, apologies, or any prose outside of the JSON structure.
+**BALANCED SCORING PHILOSOPHY:**
+- Aim for a high level of objectivity. A solid, well-qualified candidate should score in the **75-85** range.
+- A score of **90+** indicates an exceptionally strong match with standout achievements.
+- While quantifiable metrics are highly valued, also give credit for clearly described responsibilities, technical complexity, and career growth.
 
 ---
 
 ### INSTRUCTIONS & RUBRICS
 
 **1. General Rules:**
-- For each dimension, provide a score based on the provided CV and Job Description.
-- For the `evidence` field in each subscore, you MUST provide an array of direct, concise quotes from the CV that justify your score.
-- If no evidence can be found for a dimension, the score MUST be 0 and the `evidence` array must contain the single string "No evidence found.".
+- For the `evidence` field, provide direct quotes from the CV.
+- If no evidence is found for a dimension, score it according to the "missing" criteria in the rubric (usually 0).
+- Be constructive. Identify both clear strengths and areas for improvement.
 
 **2. PART 1: CV QUALITY (100 points total)**
-Evaluate the CV's intrinsic quality, independent of the job description.
-- ats_structure (10): Contact details are clear, sections are well-defined, bullets are easily parseable, dates are consistent.
-- writing_clarity (15): Concise, uses active voice (e.g., "Led," "Developed"), parallel bullet structure, no typos or grammatical errors.
-- quantified_impact (20): Uses specific metrics (% / $ / user numbers / latency reduction) to show the impact of actions.
-- technical_depth (15): Mentions specific, non-generic tools/frameworks/architectures. Shows understanding of complex systems.
-- projects_portfolio (10): Includes links to a portfolio, GitHub, or describes personal/open-source projects with outcomes.
-- leadership_skills (10): Provides evidence of leading teams, mentoring others, project ownership, or significant cross-functional work.
-- career_progression (10): Shows increasing responsibility over time. Timeline is clear and logical.
-- consistency (10): Formatting, tone, and verb tenses are consistent throughout the document. No large, unexplained career gaps.
+- **ats_structure (10):** Professional layout, clear sections, and consistent formatting. Deduct only for major layout issues that genuinely hinder parsing.
+- **writing_clarity (15):** Clear, professional language. Deduct for multiple typos or overly verbose descriptions.
+- **quantified_impact (20):** High scores (15-20) for specific metrics. Mid scores (8-14) for well-described achievements without exact numbers.
+- **technical_depth (15):** Shows understanding of tools and workflows. Higher scores for describing *how* tools were used in context.
+- **projects_portfolio (10):** Relevant projects or links that demonstrate hands-on application.
+- **leadership_skills (10):** Evidence of ownership, mentoring, or team collaboration.
+- **career_progression (10):** Logical growth in responsibilities. Note frequent short tenures (<1 year) only if they form a pattern.
+- **consistency (10):** Uniformity in dates, font styles, and professional tone.
 
 **3. PART 2: JOB MATCH (100 points total)**
-Evaluate how well the CV matches the specific Job Description.
-- hard_skills (35): Coverage of "must-have" technical skills, tools, and frameworks from the JD. Consider exact, alias (e.g., AWS vs. Amazon Web Services), and semantic matches.
-- responsibilities (15): Overlap between the candidate's experience (verbs and outcomes) and the key responsibilities listed in the JD.
-- domain_relevance (10): Match of the candidate's industry experience (e.g., FinTech, SaaS, AI) with the company's domain.
-- seniority (10): Candidate's years of relevant experience vs. JD requirements (e.g., "5+ years").
-- nice_to_haves (5): Coverage of optional skills or "bonus points" mentioned in the JD.
-- education_certs (5): Match for required or preferred degrees and certifications.
-- recent_achievements (10): Candidate's accomplishments in the last 1-2 roles directly align with the core needs of the job.
-- constraints (10): Match on practical constraints like location, work authorization, or travel. If not mentioned, assume a match.
+- **hard_skills (35):** Match between candidate's core technical stack and the JD's requirements.
+- **responsibilities (15):** Overlap in past duties and the expected role.
+- **domain_relevance (10):** Familiarity with the industry or similar business models.
+- **seniority (10):** Alignment with the requested experience level.
+- **nice_to_haves (5):** Credit for bonus skills mentioned in the JD.
+- **education_certs (5):** Relevant academic background or certifications.
+- **recent_achievements (10):** Relevancy of the candidate's most recent 1-2 roles.
+- **constraints (10):** Alignment with location, work schedule, or travel requirements.
 
 **4. PART 3: KEY TAKEAWAYS**
-Based on your full analysis, identify critical highlights.
-- red_flags: List any critical deal-breakers. A red flag is a clear mismatch on a non-negotiable requirement (e.g., JD requires US work authorization, CV states candidate needs sponsorship; JD requires a specific security clearance the candidate lacks).
-- green_flags: List 2-3 standout qualifications that make the candidate exceptionally strong for this role.
+- **red_flags:** Identify genuine deal-breakers or significant risks.
+- **green_flags:** Highlight the top 2-3 reasons this candidate is a strong fit.
 
 ---
 
@@ -51,131 +51,72 @@ CV:
 
 Job Description:
 {jd_text}
-
----
-
-### OUTPUT SCHEMA (strict JSON only):
-
-{{
-  "cv_quality": {{
-    "overall_score": float,
-    "subscores": [
-      {{"dimension": "ats_structure", "score": float, "max_score": 10, "evidence": [string]}},
-      {{"dimension": "writing_clarity", "score": float, "max_score": 15, "evidence": [string]}},
-      {{"dimension": "quantified_impact", "score": float, "max_score": 20, "evidence": [string]}},
-      {{"dimension": "technical_depth", "score": float, "max_score": 15, "evidence": [string]}},
-      {{"dimension": "projects_portfolio", "score": float, "max_score": 10, "evidence": [string]}},
-      {{"dimension": "leadership_skills", "score": float, "max_score": 10, "evidence": [string]}},
-      {{"dimension": "career_progression", "score": float, "max_score": 10, "evidence": [string]}},
-      {{"dimension": "consistency", "score": float, "max_score": 10, "evidence": [string]}}
-    ]
-  }},
-  "jd_match": {{
-    "overall_score": float,
-    "subscores": [
-      {{"dimension": "hard_skills", "score": float, "max_score": 35, "evidence": [string]}},
-      {{"dimension": "responsibilities", "score": float, "max_score": 15, "evidence": [string]}},
-      {{"dimension": "domain_relevance", "score": float, "max_score": 10, "evidence": [string]}},
-      {{"dimension": "seniority", "score": float, "max_score": 10, "evidence": [string]}},
-      {{"dimension": "nice_to_haves", "score": float, "max_score": 5, "evidence": [string]}},
-      {{"dimension": "education_certs", "score": float, "max_score": 5, "evidence": [string]}},
-      {{"dimension": "recent_achievements", "score": float, "max_score": 10, "evidence": [string]}},
-      {{"dimension": "constraints", "score": float, "max_score": 10, "evidence": [string]}}
-    ]
-  }},
-  "key_takeaways": {{
-    "red_flags": [string],
-    "green_flags": [string]
-  }}
-}}"""
+"""
 
 
 
-CV_ONLY_EVALUATION_PROMPT = """You are an expert hiring evaluator. Your task is to analyze a Candidate CV and return a detailed scoring analysis.
+CV_ONLY_EVALUATION_PROMPT = """You are an expert recruitment specialist. Your task is to provide a balanced, intrinsic analysis of a Candidate CV.
 
-Return ONLY valid JSON that strictly adheres to the schema provided at the end. Do NOT include explanations, apologies, or any prose outside of the JSON structure.
+**BALANCED SCORING PHILOSOPHY:**
+- A high-quality professional resume should land in the **75-85** range.
+- **90+** is for truly standout profiles with significant impact.
+- Balance the emphasis on quantifiable metrics with clear evidence of skill application and professional growth.
 
 ---
 
 ### INSTRUCTIONS & RUBRICS
 
 **1. General Rules:**
-- For each dimension, provide a score based on the provided CV.
-- For the `evidence` field in each subscore, you MUST provide an array of direct, concise quotes from the CV that justify your score.
-- If no evidence can be found for a dimension, the score MUST be 0 and the `evidence` array must contain the single string "No evidence found.".
+- Evidence must be direct quotes.
+- No evidence = 0 score.
 
 **2. PART 1: CV QUALITY (100 points total)**
-Evaluate the CV's intrinsic quality:
-- ats_structure (10): Contact details are clear, sections are well-defined, bullets are easily parseable, dates are consistent.
-- writing_clarity (15): Concise, uses active voice (e.g., "Led," "Developed"), parallel bullet structure, no typos or grammatical errors.
-- quantified_impact (20): Uses specific metrics (% / $ / user numbers / latency reduction) to show the impact of actions.
-- technical_depth (15): Mentions specific, non-generic tools/frameworks/architectures. Shows understanding of complex systems.
-- projects_portfolio (10): Includes links to a portfolio, GitHub, or describes personal/open-source projects with outcomes.
-- leadership_skills (10): Provides evidence of leading teams, mentoring others, project ownership, or significant cross-functional work.
-- career_progression (10): Shows increasing responsibility over time. Timeline is clear and logical.
-- consistency (10): Formatting, tone, and verb tenses are consistent throughout the document. No large, unexplained career gaps.
+- **ats_structure (10):** Clear, professional, and well-organized.
+- **writing_clarity (15):** Concise and error-free.
+- **quantified_impact (20):** Value metrics (15-20) or clear achievement descriptions (8-14).
+- **technical_depth (15):** Evidence of technical competency and context.
+- **projects_portfolio (10):** Meaningful work samples or projects.
+- **leadership_skills (10):** Collaboration and ownership skills.
+- **career_progression (10):** Fair assessment of professional growth.
+- **consistency (10):** Logical and aesthetic uniformity.
 
 **3. PART 2: KEY TAKEAWAYS**
-Based on your full analysis, identify critical highlights.
-- red_flags: List any critical weaknesses (e.g., no quantified impact, inconsistent timeline).
-- green_flags: List 2-3 standout qualifications that make the candidate exceptionally strong overall.
+- **red_flags:** Significant gaps or risks to be aware of.
+- **green_flags:** stand-out skills or experiences.
 
 ---
 
 ### INPUT:
 CV:
 {cv_text}
-
----
-
-### OUTPUT SCHEMA (strict JSON only):
-
-{{
-  "cv_quality": {{
-    "overall_score": float,
-    "subscores": [
-      {{"dimension": "ats_structure", "score": float, "max_score": 10, "evidence": [string]}},
-      {{"dimension": "writing_clarity", "score": float, "max_score": 15, "evidence": [string]}},
-      {{"dimension": "quantified_impact", "score": float, "max_score": 20, "evidence": [string]}},
-      {{"dimension": "technical_depth", "score": float, "max_score": 15, "evidence": [string]}},
-      {{"dimension": "projects_portfolio", "score": float, "max_score": 10, "evidence": [string]}},
-      {{"dimension": "leadership_skills", "score": float, "max_score": 10, "evidence": [string]}},
-      {{"dimension": "career_progression", "score": float, "max_score": 10, "evidence": [string]}},
-      {{"dimension": "consistency", "score": float, "max_score": 10, "evidence": [string]}}
-    ]
-  }},
-  "key_takeaways": {{
-    "red_flags": [string],
-    "green_flags": [string]
-  }}
-}}"""
+"""
 
 
-IMPROVEMENT_PROMPT = """You are an AI career coach. Your task is to analyze a Candidate CV against a Job Description and suggest improvements.
+IMPROVEMENT_PROMPT = """You are an expert career coach. Your task is to analyze a Candidate CV against a Job Description and provide actionable, high-impact improvements.
 
-Return ONLY valid JSON that strictly adheres to the schema provided at the end. Do NOT include explanations, apologies, or any prose outside of the JSON structure.
+**COACHING GUIDELINE:**
+- Be professional, encouraging, and highly specific. 
+- Focus on bridging the gap between the candidate's current profile and the ideal requirements of the role.
+- Prioritize high-value changes that will significantly improve the candidate's chances of landing an interview.
 
 ---
 
 ### INSTRUCTIONS
 
 **1. Tailored Resume**
-- Extract **personal_info** (name, email, phone, etc.) directly from the CV.
-- Rewrite the CV’s **summary** in language tailored to the JD.
-- Reframe **experience bullets** to match the JD’s phrasing and highlight achievements.
-- Reorder and prioritize **skills** relevant to the JD.
-- Map **projects** to the JD’s requirements.
+- **personal_info:** Extract accurately.
+- **summary:** Rewrite to be compelling, achievement-oriented, and JD-aligned.
+- **experience:** Enhance bullets using the "Action Verb + Task + Result" pattern. Quantify impact wherever possible.
+- **skills:** Organize and highlight technical skills most relevant to the JD.
+- **projects:** Showcase projects that demonstrate the core competencies requested.
 
 **2. Top 1% Candidate Gap Analysis**
-- Describe what a top 1% candidate for this role would include in their resume.
-- Identify the candidate’s **strengths** vs JD.
-- Identify **gaps** (skills, experiences, achievements).
-- Suggest **actionable next steps**.
+- **strengths:** Highlight the candidate's most competitive assets for this specific role.
+- **gaps:** Identify key areas (skills, experience, or certifications) where the candidate can further align with top-tier requirements.
+- **actionable_next_steps:** Provide clear, realistic steps for professional growth.
 
 **3. Cover Letter**
-- Draft a short, compelling cover letter (<200 words).
-- Be specific, enthusiastic, and highlight the candidate’s most relevant achievements.
-- Tie directly to the company’s role.
+- Draft a concise, persuasive cover letter (<200 words) that connects the candidate's top achievements to the company's needs.
 
 ---
 
@@ -185,93 +126,36 @@ CV:
 
 Job Description:
 {jd_text}
-
----
-
-### OUTPUT SCHEMA (strict JSON only):
-
-{{
-  "tailored_resume": {{
-    "personal_info": {{
-      "name": "Full Name",
-      "email": "Email Address",
-      "phone": "Phone Number",
-      "location": "City, Country",
-      "linkedin": "linkedin.com/in/username",
-      "github": "github.com/username",
-      "website": "portfolio.com"
-    }},
-    "summary": "revised summary here",
-    "experience": ["reframed bullet 1", "reframed bullet 2"],
-    "skills": ["skill1", "skill2"],
-    "projects": ["mapped project1", "mapped project2"]
-  }},
-  "top_1_percent_gap": {{
-    "strengths": ["strength1", "strength2"],
-    "gaps": ["gap1", "gap2"],
-    "actionable_next_steps": ["step1", "step2"]
-  }},
-  "cover_letter": "Draft under 200 words..."
-}}
 """
 
-CV_ONLY_IMPROVEMENT_PROMPT = """You are an AI career coach. Your task is to analyze a Candidate CV and suggest generic industry-standard improvements.
+CV_ONLY_IMPROVEMENT_PROMPT = """You are an expert career coach. Your task is to perform an industry-standard audit of a Candidate CV and suggest professional improvements.
 
-Return ONLY valid JSON that strictly adheres to the schema provided at the end. Do NOT include explanations, apologies, or any prose outside of the JSON structure.
+**COACHING GUIDELINE:**
+- Focus on transforming "task-based" descriptions into "achievement-oriented" highlights.
+- Provide clear, professional advice that helps the candidate stand out in a competitive market.
 
 ---
 
 ### INSTRUCTIONS
 
 **1. Tailored Resume**
-- Extract **personal_info** (name, email, phone, etc.) directly from the CV.
-- Rewrite the CV’s **summary** in stronger, impact-driven language.
-- Reframe **experience bullets** to highlight achievements and quantified impact.
-- Reorder and prioritize **skills** based on general industry relevance.
-- Optimize **projects** for maximum visibility and structural impact.
+- **personal_info:** Extract accurately.
+- **summary:** Professional, impact-driven, and concise.
+- **experience:** Reframe bullets to emphasize results and quantifiable outcomes.
+- **skills:** Categorize effectively for industry relevance.
+- **projects:** Highlight complexity and professional application.
 
 **2. Top 1% Candidate Gap Analysis**
-- Describe what a top 1% candidate with this profile would include in their resume.
-- Identify the candidate’s current **strengths**.
-- Identify **gaps** (missing standard skills, generic descriptions, lack of explicit achievements).
-- Suggest highly **actionable next steps**.
+- **strengths:** Identifiable unique selling points.
+- **gaps:** Areas for improvement in technical depth or impact reporting.
+- **actionable_next_steps:** Concrete suggestions for career advancement.
 
 **3. Cover Letter**
-- Draft a short, compelling general cover letter (<200 words).
-- Frame the candidate as enthusiastically open to opportunities, explicitly highlighting their most impressive achievements.
+- Draft a professional, achievement-forward general cover letter (<200 words).
 
 ---
 
 ### INPUT:
 CV:
 {cv_text}
-
----
-
-### OUTPUT SCHEMA (strict JSON only):
-
-{{
-  "tailored_resume": {{
-    "personal_info": {{
-      "name": "Full Name",
-      "email": "Email Address",
-      "phone": "Phone Number",
-      "location": "City, Country",
-      "linkedin": "linkedin.com/in/username",
-      "github": "github.com/username",
-      "website": "portfolio.com"
-    }},
-    "summary": "revised summary here",
-    "experience": ["reframed bullet 1", "reframed bullet 2"],
-    "skills": ["skill1", "skill2"],
-    "projects": ["optimized project1", "optimized project2"]
-  }},
-  "top_1_percent_gap": {{
-    "strengths": ["strength1", "strength2"],
-    "gaps": ["gap1", "gap2"],
-    "actionable_next_steps": ["step1", "step2"]
-  }},
-  "cover_letter": "Draft under 200 words..."
-}}
 """
-
