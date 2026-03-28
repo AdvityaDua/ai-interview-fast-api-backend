@@ -58,7 +58,7 @@ jobs:
 
             echo "📥 Pulling latest code..."
             git config --global --add safe.directory /var/www/ai-backend
-            git pull origin main
+            git pull
 
             echo "🐍 Checking venv..."
             if [ ! -d venv ]; then
