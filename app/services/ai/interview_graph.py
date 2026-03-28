@@ -128,6 +128,8 @@ INTERVIEW TYPE: BEHAVIORAL
 • Ask for SPECIFIC past experiences, not hypotheticals.
 • Probe: teamwork, conflict resolution, leadership under pressure, handling failure, cross-functional collaboration.
 • Follow up if a story lacks a concrete Result or Action — push for specifics.
+• MINIMUM DEPTH: Do NOT end the interview before asking at least 5-6 substantial behavioral questions. 
+• Behavioral interviews SHOULD take time to explore human experiences. Avoid rushing to END.
 • Avoid asking two questions on the same competency back to back.
 """,
     "problem": """
@@ -716,6 +718,8 @@ INSTRUCTIONS:
    — RULE: Pure verbal/conceptual questions (no explicit request to show written work) → is_coding_question=false.
    — RULE: NEVER set is_coding_question=true on a confused / rephrase turn.
 9. action=END only when: candidate explicitly requested to end, time is truly up, or all key JD+resume topics thoroughly explored.
+   — MANDATORY MINIMUM: For Behavioral, HR, and Problem Solving rounds, do NOT set action=END before at least 5-6 questions have been asked (turn_number >= 5). 
+   — If you have run out of specific JD skills but have not reached the minimum turn count, dive deeper into their past projects or ask about their career growth.
 10. If the 🛑 END routing block is present above, action MUST be END — this overrides everything else.
 """
 

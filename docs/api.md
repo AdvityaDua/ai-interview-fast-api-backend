@@ -5,6 +5,7 @@ This document outlines the API endpoints available in the newly architected Fast
 ## 1. WebSockets (Real-Time Interview)
 These endpoints require a valid JWT token passed as a query parameter (`?token=YOUR_JWT`).
 
+
 ### `ws://localhost:8001/api/v1/interview/chat`
 * **Purpose**: Primary conversational backbone for the AI interview.
 * **Usage**: On connection, the client sends an initialized payload containing the candidate's resume, job description, role, etc. From there, it duplexes bidirectional audio and text messages, pushing the user's spoken words or chat into the Langchain Gemini Engine and returning the AI's spoken words or chat.
