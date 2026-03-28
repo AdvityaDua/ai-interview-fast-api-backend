@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(
         lifespan=lifespan,
-        title="AI Interview Coach Backend",
+        title="Ai for job Backend",
         description=API_DESCRIPTION,
         version="2.0.0",
         openapi_tags=TAGS_METADATA

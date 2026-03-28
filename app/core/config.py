@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 settings = Settings()
 
 API_DESCRIPTION = """
-🚀 **AI Interview Coach API**
+🚀 **Ai for job API**
 
 This API powers the core AI models, WebSockets for the Interview module, and Resume Evaluation engine. 
 It replaces the legacy backends with a robust, production-grade FastAPI architecture.
