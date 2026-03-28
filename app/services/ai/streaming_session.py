@@ -154,48 +154,65 @@ class StreamingInterviewSession:
         max_q = _max_questions_for_duration(duration)
         print(f"[Session] duration={duration}min → max_questions={max_q} max_confusion_retries={_max_confusion_retries_for_duration(duration)}")
         
-        # Static context summarization - now returns usage info too
-        context, context_usage = await self.client.summarize_context(resume_text, jd_text, interview_type, role, company, candidate_name)
+        # ── Token accounting ────────────────────────────────────────────────────
+        init_input_tokens  = 0
+        init_output_tokens = 0
+
+        # ── 1. Try to restore from resume context cache ─────────────────────────
+        #       This skips the 2 most expensive init LLM calls entirely.
+        from app.services.resume_cache import resume_cache
         
-        # Track initialization tokens
-        init_input_tokens = context_usage.get("input_tokens", 0)
-        init_output_tokens = context_usage.get("output_tokens", 0)
-        
-        # Extract skills for structured tracking (one-time init call, saves tokens on every turn)
-        # JD skills get explicit priority when a JD was provided.
-        _dev_hint = (
-            "Include specific technologies, languages, frameworks, and algorithms relevant "
-            "to the role. Be granular (e.g. 'React hooks', 'database indexing', 'REST API design')."
-            if interview_type in ("technical", "problem")
-            else "Include both technical and soft skills relevant to the role and interview type."
-        )
-        _jd_hint = (
-            "IMPORTANT: Skills explicitly listed in the JD Required Skills section MUST appear "
-            "first in your list — even if the candidate's resume is weak on them. These are the "
-            "gaps and requirements the interviewer MUST probe."
-            if jd_text and jd_text.strip()
-            else ""
-        )
-        skills_prompt = (
-            f"Based on this context summary, list the top 12 skills/topics to evaluate in a "
-            f"{interview_type} interview for a '{role or 'the role'}' candidate. "
-            f"{_dev_hint} "
-            f"{_jd_hint} "
-            f"Return ONLY a comma-separated list, ordered by importance (JD-required skills first), "
-            f"no numbering, no explanation.\n\n{context}"
-        )
-        skills_res = await self.client.client.aio.models.generate_content(model=self.client.model_name, contents=skills_prompt)
-        initial_skills = [s.strip() for s in skills_res.text.split(',') if s.strip()][:12]
-        
-        # Track skills extraction tokens
-        if hasattr(skills_res, 'usage_metadata'):
-            init_input_tokens += getattr(skills_res.usage_metadata, 'prompt_token_count', 0)
-            init_output_tokens += getattr(skills_res.usage_metadata, 'candidates_token_count', 0)
-            print(f"[Session] skills extraction usage: in={getattr(skills_res.usage_metadata, 'prompt_token_count', 0)}, out={getattr(skills_res.usage_metadata, 'candidates_token_count', 0)}")
-        
+        cached = await resume_cache.get(resume_text, jd_text, interview_type, role, company)
+
+        if cached:
+            # ── CACHE HIT: restore summary + skills, zero LLM cost ──────────────
+            context         = cached["context_summary"]
+            initial_skills  = cached["skills"]
+            print(f"[Session] ✅ Resume context cache HIT — skipped summarize_context + skills extraction (~2,000–5,000 tokens saved)")
+        else:
+            # ── CACHE MISS: run LLM calls and cache the result ───────────────────
+            # 1a. Static context summarization
+            context, context_usage = await self.client.summarize_context(resume_text, jd_text, interview_type, role, company, candidate_name)
+            init_input_tokens  += context_usage.get("input_tokens", 0)
+            init_output_tokens += context_usage.get("output_tokens", 0)
+            
+            # 1b. Extract skills for structured tracking (priority-ordered, JD first)
+            _dev_hint = (
+                "Include specific technologies, languages, frameworks, and algorithms relevant "
+                "to the role. Be granular (e.g. 'React hooks', 'database indexing', 'REST API design')."
+                if interview_type in ("technical", "problem")
+                else "Include both technical and soft skills relevant to the role and interview type."
+            )
+            _jd_hint = (
+                "IMPORTANT: Skills explicitly listed in the JD Required Skills section MUST appear "
+                "first in your list — even if the candidate's resume is weak on them. These are the "
+                "gaps and requirements the interviewer MUST probe."
+                if jd_text and jd_text.strip()
+                else ""
+            )
+            skills_prompt = (
+                f"Based on this context summary, list the top 12 skills/topics to evaluate in a "
+                f"{interview_type} interview for a '{role or 'the role'}' candidate. "
+                f"{_dev_hint} "
+                f"{_jd_hint} "
+                f"Return ONLY a comma-separated list, ordered by importance (JD-required skills first), "
+                f"no numbering, no explanation.\n\n{context}"
+            )
+            skills_res = await self.client.client.aio.models.generate_content(model=self.client.model_name, contents=skills_prompt)
+            initial_skills = [s.strip() for s in skills_res.text.split(',') if s.strip()][:12]
+            
+            if hasattr(skills_res, 'usage_metadata'):
+                init_input_tokens  += getattr(skills_res.usage_metadata, 'prompt_token_count', 0)
+                init_output_tokens += getattr(skills_res.usage_metadata, 'candidates_token_count', 0)
+                print(f"[Session] skills extraction usage: in={getattr(skills_res.usage_metadata, 'prompt_token_count', 0)}, out={getattr(skills_res.usage_metadata, 'candidates_token_count', 0)}")
+
+            # ── Store in cache so future rounds are free ─────────────────────────
+            await resume_cache.set(resume_text, jd_text, interview_type, role, company, context, initial_skills)
+            print(f"[Session] 💾 Cached resume context for future rounds")
+
         print(f"[Session] Total init tokens: in={init_input_tokens}, out={init_output_tokens}")
 
-        # Detect developer role for coding question enforcement
+        # ── Detect developer role for coding question enforcement ────────────────
         _developer_keywords = (
             "developer", "engineer", "programmer", "software", "backend", "frontend",
             "full stack", "fullstack", "sde", "swe", "coder", "architect", "devops",
@@ -264,14 +281,16 @@ class StreamingInterviewSession:
         return f"TIME: {elapsed_str} elapsed. ~{int(remaining)}m remaining of {self.duration_limit}min."
 
     async def stream_response(self, user_input: str = None):
-        # Hard time enforcement: skip the graph entirely if duration is exceeded
+        # Soft time enforcement: Allow a 5-minute grace period beyond duration_limit
+        # before forcing a hard close. The AI is already prompted to wrap up 
+        # via get_time_context() in the graph.
         if self.duration_limit > 0 and self.start_time > 0:
             elapsed_min = (time.time() - self.start_time) / 60.0
-            if elapsed_min >= self.duration_limit:
+            if elapsed_min >= (self.duration_limit + 5):
                 closing = (
-                    "We've reached the end of our scheduled time. "
-                    "Thank you so much for your time today — it was a great conversation. "
-                    "I'll make sure my feedback reaches the team. Best of luck!"
+                    "We've reached the absolute time limit for this session. "
+                    "Thank you so much for your time today — it was a productive conversation. "
+                    "I'll now begin generating your feedback report. Best of luck!"
                 )
                 self.state["ended"] = True
                 yield {"type": "metadata", "is_coding": False}
@@ -322,8 +341,9 @@ class StreamingInterviewSession:
         active_model = key_manager.get_gemini_model()
         # Per-model pricing (USD per 1M tokens)
         PRICING = {
-            "gemini-2.5-flash":    (0.075, 0.30),
-            "gemini-2.5-pro":      (1.25,  10.00),
+            "gemini-2.5-flash":    (0.10,  0.40),
+            "gemini-2.5-pro":      (1.25,  5.00),
+            "gemini-2.0-flash":    (0.10,  0.40),
             "gemini-1.5-flash":    (0.075, 0.30),
             "gemini-1.5-flash-8b": (0.0375, 0.15),
         }

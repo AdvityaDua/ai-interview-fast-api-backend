@@ -241,119 +241,132 @@ async def stream_interview_endpoint(
                 return
 
             if init_payload.get("type") == "init":
-                # Clear any existing session to ensure fresh start with new resume
-                print(f"[WS] Clearing any existing session for {user_id} before new init")
-                await manager.clear_session(user_id)
-                resume_text = init_payload.get("resume_text", "")
-                resume_url  = init_payload.get("resume_url", "")
-                resume_path = init_payload.get("resume_path", "")  # raw relative path from MongoDB
-                jd_text = init_payload.get("jd_text", "")
-                interview_type = init_payload.get("interview_type", "technical")
-                role = init_payload.get("role", "")
-                company = init_payload.get("company", "")
-                duration = init_payload.get("duration", 0)
-                candidate_name = init_payload.get("candidate_name", "")
+                # Check if we should actually clear or if this is a "redundant" init after restoration
+                is_reconnection = False
+                if restored and session.history:
+                    # If we restored a session with history, we usually want to KEEP it.
+                    # We check if the incoming init matches the existing session's context.
+                    if (session.interview_type == init_payload.get("interview_type", "technical") and
+                        session.role == init_payload.get("role", "") and
+                        session.company == init_payload.get("company", "")):
+                        print(f"[WS] ⚡ Valid restoration detected for {user_id}. Keeping history.")
+                        is_reconnection = True
 
-                # ── Debug: print everything received ──
-                print(f"[WS] ============ INIT PAYLOAD RECEIVED ============")
-                print(f"[WS] User: {user_id} | Round: {interview_type} | Role: {role} | Company: {company}")
-                print(f"[WS] Candidate name: {candidate_name!r}")
-                print(f"[WS] resume_text length from frontend: {len(resume_text)} chars")
-                print(f"[WS] resume_url:  {resume_url!r}")
-                print(f"[WS] resume_path: {resume_path!r}")
-                print(f"[WS] jd_text length: {len(jd_text)} chars")
-
-                # ── Fallback: extract resume text from file on disk if empty ──
-                if len(resume_text.strip()) < 50:
-                    local_path = None
-
-                    # Strategy 1: use the raw relative path directly (most reliable)
-                    if resume_path:
-                        print(f"[WS] Strategy 1: trying raw resume_path directly: {resume_path!r}")
-                        candidates = [
-                            resume_path,
-                            os.path.join("..", "backend", resume_path),
-                            os.path.abspath(os.path.join("..", "backend", resume_path)),
-                        ]
-                        for c in candidates:
-                            norm = os.path.normpath(c)
-                            print(f"[WS]   checking {norm} ... exists={os.path.isfile(norm)}")
-                            if os.path.isfile(norm):
-                                local_path = norm
-                                print(f"[WS] ✅ Found via resume_path: {local_path}")
-                                break
-
-                    # Strategy 2: fall back to URL-based resolution
-                    if not local_path and resume_url:
-                        print(f"[WS] Strategy 2: trying URL resolution for: {resume_url!r}")
-                        local_path = _resolve_resume_url_to_path(resume_url)
-
-                    if local_path:
-                        resume_text = await asyncio.to_thread(_extract_text_from_file, local_path)
-                        print(f"[WS] Extracted {len(resume_text)} chars from {local_path}")
-                    else:
-                        print(f"[WS] ⚠️  Could not locate resume file via path or URL.")
-
-                # ── Final debug: print resume content ──
-                if resume_text and len(resume_text.strip()) > 10:
-                    print(f"[WS] ✅ RESUME TEXT OK ({len(resume_text)} chars total)")
-                    print(f"[WS] --- RESUME PREVIEW (first 600 chars) ---")
-                    print(resume_text[:600])
-                    print(f"[WS] -------------------------------------------")
-                else:
-                    print(f"[WS] ❌ RESUME TEXT IS EMPTY! AI will not be personalized.")
-
-                if jd_text and len(jd_text.strip()) > 10:
-                    print(f"[WS] ✅ JD TEXT OK ({len(jd_text)} chars). Preview: {jd_text[:200]}")
-                else:
-                    print(f"[WS] ⚠️  JD TEXT is empty.")
-
-                print(f"[WS] ================================================")
-                print(f"[WS] Initializing context for {user_id} ({interview_type} round)...")
-                
-                # Create a fresh session for this new interview
-                client = GeminiClient()
-                session = StreamingInterviewSession(client)
-                manager.sessions[user_id] = session
-                manager.audio_metrics[user_id] = []
-                
-                try:
-                    await manager.send_json({"type": "info", "content": "Analyzing resume & role..."}, user_id)
-                    await session.initialize_session(
-                        user_id,
-                        client_id,
-                        resume_text, 
-                        jd_text, 
-                        interview_type, 
-                        role, 
-                        company, 
-                        duration,
-                        candidate_name
-                    )
-                    await manager.send_json({"type": "info", "content": "Context initialized."}, user_id)
-                    
-                    await manager.save_session_to_cache(user_id)
-                    
-                    print(f"[WS] Starting first AI response for {user_id}")
-                    await manager.send_json({"type": "stream_start"}, user_id)
-                    async for item in session.stream_response(None):
-                        if item["type"] == "metadata":
-                            await manager.send_json({"type": "metadata", "is_coding": item["is_coding"]}, user_id)
-                        else:
-                            await manager.send_json({"type": "text", "content": item["content"]}, user_id)
-                    await manager.send_json({"type": "stream_end"}, user_id)
-                    
-                    await manager.save_session_to_cache(user_id)
-                except Exception as e:
-                    print(f"[WS] Initialization error for {user_id}: {str(e)}")
-                    import traceback
-                    traceback.print_exc()
-                    try:
-                        await manager.send_json({"type": "error", "content": f"AI Engine failed to initialize: {str(e)}"}, user_id)
-                    except Exception:
-                        pass
+                if not is_reconnection:
+                    # Clear any existing session to ensure fresh start with new resume
+                    print(f"[WS] Clearing any existing session for {user_id} before new init")
                     await manager.clear_session(user_id)
-                    return  # ← EXIT: do NOT fall into the main message loop after init failure
+                    
+                    resume_text = init_payload.get("resume_text", "")
+                    resume_url  = init_payload.get("resume_url", "")
+                    resume_path = init_payload.get("resume_path", "")  # raw relative path from MongoDB
+                    jd_text = init_payload.get("jd_text", "")
+                    interview_type = init_payload.get("interview_type", "technical")
+                    role = init_payload.get("role", "")
+                    company = init_payload.get("company", "")
+                    duration = init_payload.get("duration", 0)
+                    candidate_name = init_payload.get("candidate_name", "")
+
+                    # ── Debug: print everything received ──
+                    print(f"[WS] ============ INIT PAYLOAD RECEIVED ============")
+                    print(f"[WS] User: {user_id} | Round: {interview_type} | Role: {role} | Company: {company}")
+                    print(f"[WS] Candidate name: {candidate_name!r}")
+                    print(f"[WS] resume_text length from frontend: {len(resume_text)} chars")
+                    print(f"[WS] resume_url:  {resume_url!r}")
+                    print(f"[WS] resume_path: {resume_path!r}")
+                    print(f"[WS] jd_text length: {len(jd_text)} chars")
+
+                    # ── Fallback: extract resume text from file on disk if empty ──
+                    if len(resume_text.strip()) < 50:
+                        local_path = None
+
+                        # Strategy 1: use the raw relative path directly (most reliable)
+                        if resume_path:
+                            print(f"[WS] Strategy 1: trying raw resume_path directly: {resume_path!r}")
+                            candidates = [
+                                resume_path,
+                                os.path.join("..", "backend", resume_path),
+                                os.path.abspath(os.path.join("..", "backend", resume_path)),
+                            ]
+                            for c in candidates:
+                                norm = os.path.normpath(c)
+                                print(f"[WS]   checking {norm} ... exists={os.path.isfile(norm)}")
+                                if os.path.isfile(norm):
+                                    local_path = norm
+                                    print(f"[WS] ✅ Found via resume_path: {local_path}")
+                                    break
+
+                        # Strategy 2: fall back to URL-based resolution
+                        if not local_path and resume_url:
+                            print(f"[WS] Strategy 2: trying URL resolution for: {resume_url!r}")
+                            local_path = _resolve_resume_url_to_path(resume_url)
+
+                        if local_path:
+                            resume_text = await asyncio.to_thread(_extract_text_from_file, local_path)
+                            print(f"[WS] Extracted {len(resume_text)} chars from {local_path}")
+                        else:
+                            print(f"[WS] ⚠️  Could not locate resume file via path or URL.")
+
+                    # ── Final debug: print resume content ──
+                    if resume_text and len(resume_text.strip()) > 10:
+                        print(f"[WS] ✅ RESUME TEXT OK ({len(resume_text)} chars total)")
+                        print(f"[WS] --- RESUME PREVIEW (first 600 chars) ---")
+                        print(resume_text[:600])
+                        print(f"[WS] -------------------------------------------")
+                    else:
+                        print(f"[WS] ❌ RESUME TEXT IS EMPTY! AI will not be personalized.")
+
+                    if jd_text and len(jd_text.strip()) > 10:
+                        print(f"[WS] ✅ JD TEXT OK ({len(jd_text)} chars). Preview: {jd_text[:200]}")
+                    else:
+                        print(f"[WS] ⚠️  JD TEXT is empty.")
+
+                    print(f"[WS] ================================================")
+                    print(f"[WS] Initializing context for {user_id} ({interview_type} round)...")
+                    
+                    # Create a fresh session for this new interview
+                    client = GeminiClient()
+                    session = StreamingInterviewSession(client)
+                    manager.sessions[user_id] = session
+                    manager.audio_metrics[user_id] = []
+                    
+                    try:
+                        await manager.send_json({"type": "info", "content": "Analyzing resume & role..."}, user_id)
+                        await session.initialize_session(
+                            user_id,
+                            client_id,
+                            resume_text, 
+                            jd_text, 
+                            interview_type, 
+                            role, 
+                            company, 
+                            duration,
+                            candidate_name
+                        )
+                        await manager.send_json({"type": "info", "content": "Context initialized."}, user_id)
+                        
+                        await manager.save_session_to_cache(user_id)
+                        
+                        print(f"[WS] Starting first AI response for {user_id}")
+                        await manager.send_json({"type": "stream_start"}, user_id)
+                        async for item in session.stream_response(None):
+                            if item["type"] == "metadata":
+                                await manager.send_json({"type": "metadata", "is_coding": item["is_coding"]}, user_id)
+                            else:
+                                await manager.send_json({"type": "text", "content": item["content"]}, user_id)
+                        await manager.send_json({"type": "stream_end"}, user_id)
+                        
+                        await manager.save_session_to_cache(user_id)
+                    except Exception as e:
+                        print(f"[WS] Initialization error for {user_id}: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
+                        try:
+                            await manager.send_json({"type": "error", "content": f"AI Engine failed to initialize: {str(e)}"}, user_id)
+                        except Exception:
+                            pass
+                        await manager.clear_session(user_id)
+                        return  # ← EXIT: do NOT fall into the main message loop after init failure
             
         # Main message loop
         while True:
