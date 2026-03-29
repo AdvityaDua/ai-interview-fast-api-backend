@@ -48,6 +48,7 @@ class InterviewState(TypedDict):
 
     # Control
     ended: bool
+    end_reason: str                # USER_EXIT | AI_ENDED | TIME_EXCEEDED | DISENGAGED | BUDGET_EXHAUSTED
 
     # Question budget (0 = no limit)
     max_questions: int
@@ -326,6 +327,8 @@ STEP 5 — follow_up_hint: specific gap to probe IF should_follow_up is true. Em
                 "max_confusion_retries": state.get("max_confusion_retries", 2),
                 "input_tokens": state.get("input_tokens", 0) + in_tok,
                 "output_tokens": state.get("output_tokens", 0) + out_tok,
+                "end_reason": "USER_EXIT" if data.answer_type == "end_requested" else state.get("end_reason", ""),
+                "ended": data.answer_type == "end_requested" or state.get("ended", False)
             }
 
         except Exception as e:
@@ -647,6 +650,23 @@ the part they left unfinished.
                 "  If you're choosing between two topics of equal interest, always pick the JD-required one.\n"
             )
 
+        # ── Specialized Company Round Overrides ──
+        company = state.get("company", "")
+        company_round_block = ""
+        if company and len(company.strip()) > 1:
+            company_round_block = f"""
+🚨 SPECIALIZED {company.upper()} ROUND RULES (STRICT):
+1. IGNORE RESUME: Do NOT analyze or ask about the candidate's personal resume, projects, or background. Skip all resume-based questions.
+2. STRICT RAG GROUNDING: You MUST ask questions ONLY from the 'QUESTION BANK & INTEL (RAG)' section provided in the context below. 
+   - Do NOT invent new technical questions. 
+   - If the RAG context contains a list of questions, pick from them sequentially or based on topic flow.
+3. INTERVIEW FLOW:
+   - TURN 0: Professional greeting + exactly ONE introductory question about why they want to join {company}.
+   - TURN 1 onwards: Transition into the technical questions found in the RAG context.
+4. LIMITED PROCEEDINGS: You may ask a single follow-up ("cross-question") if their answer was incomplete, but then you MUST move to the next RAG question. 
+5. NO GENERIC CONTENT: Do not ask standard language fundamental questions unless they are explicitly in the RAG intel.
+"""
+
         prompt = f"""You are an expert interviewer conducting a {state['interview_type'].upper()} interview.
 
 {'═' * 60}
@@ -654,6 +674,7 @@ CANDIDATE CONTEXT (resume + JD summary):
 {context}
 Role: {state.get('role', 'Not specified')} | Company: {state.get('company', 'Not specified')}
 {'═' * 60}
+{company_round_block}
 {jd_precedence_block}
 INTERVIEW PROGRESS — Turn {turn_number + 1}{f' of {max_q}' if max_q > 0 else ''}:
 • Skills covered  : {', '.join(state['skills_covered']) if state['skills_covered'] else 'None yet'}
@@ -682,10 +703,10 @@ INTERVIEW TYPE RULES:
 {'═' * 60}
 
 INSTRUCTIONS:
-1. Opening turn (turn 0): greet candidate BY NAME from CANDIDATE CONTEXT; ask a single warm-up question about their PRIMARY TECHNOLOGY listed in the resume or JD.
+1. Opening turn (turn 0): greet candidate BY NAME from CANDIDATE CONTEXT (if available); ask a single warm-up question about their PRIMARY TECHNOLOGY (or motivation if this is a Company Round).
 2. All other turns: apply the routing strategy above FIRST, then pick the best next question.
-3. ALWAYS anchor questions to the candidate's stated experience and stack. Never ask generic language-agnostic questions when their tech stack is known.
-4. If a JD is present (see 📋 JD block above): prioritise JD-required skills and gaps over resume exploration.
+3. ALWAYS anchor questions to the candidate's stated experience and stack, UNLESS this is a Specialized Company Round, in which case ONLY use RAG questions.
+4. If a JD or Company RAG is present (see 🚨 SPECIALIZED block above): prioritise those technical questions and gaps over generic resume exploration.
 5. question = the exact words you say to the candidate. Natural, conversational, interviewer tone.
 6. QUESTION DEPTH — STRICTLY ENFORCED:
    - Never ask a question a first-year student could answer trivially if the candidate has real experience.
@@ -756,10 +777,25 @@ INSTRUCTIONS:
         max_retries = state.get("max_confusion_retries", 2)
         moved_on_from_confusion = (answer_type == "confused" and consecutive_non >= max_retries + 1)
 
+        # Determine reason
+        reason = state.get("end_reason", "")
+        is_ended = evaluation.decision.action == Action.END or budget_exhausted
+        
+        if is_ended and not reason:
+            if budget_exhausted:
+                reason = "BUDGET_EXHAUSTED"
+            elif consecutive_disengaged >= _DISENGAGEMENT_THRESHOLD:
+                reason = "DISENGAGED"
+            elif "TIME UP" in state.get("time_context", ""):
+                reason = "TIME_EXCEEDED"
+            else:
+                reason = "AI_ENDED"
+
         return {
             "current_evaluation": evaluation,
             "history": new_history,
-            "ended": evaluation.decision.action == Action.END or budget_exhausted,
+            "ended": is_ended,
+            "end_reason": reason,
             "current_question": evaluation.next_step.question,
             "last_question_was_coding": evaluation.next_step.is_coding_question,
             "questions_asked": new_questions_asked,

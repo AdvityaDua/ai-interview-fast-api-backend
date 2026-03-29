@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     PISTON_URL: str = "http://localhost:2000"
     BACKEND_URL: str = "https://api.aiforjob.ai"
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:3001,http://localhost:5173,http://localhost:5174,https://aiforjob.ai,https://www.aiforjob.ai"
+    
+    # GCP / Vertex AI RAG config for google-cloud-aiplatform
+    GCP_PROJECT_ID: str = "ai-interview-7e471"
+    GCP_LOCATION: str = "us-central1"
+    GCP_RAG_LOCATION: str = "us-west1"
+    GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None
 
     class Config:
         env_file = ".env"

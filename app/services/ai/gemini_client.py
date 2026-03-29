@@ -32,21 +32,24 @@ class GeminiClient:
         """ if has_jd else "JOB DESCRIPTION: Not provided."
 
         jd_instruction = (
-            "⚠ JD IS PROVIDED: The interviewer MUST prioritise skills, technologies, "
-            "and responsibilities listed in the JD above everything else. "
-            "If a skill appears in the JD but not the resume, flag it clearly as a gap to probe. "
-            "Questions must validate the candidate against the JD requirements first, "
-            "then explore resume depth."
+            "🚨 MANDATORY JD BIAS: A Job Description is provided. You MUST prioritize validating the candidate "
+            "against the EXPLICIT requirements of this JD. "
+            "1. Focus 70% of the interview on core tech/skills listed in the JD. "
+            "2. Identify 'Skill Gaps': specific requirements in the JD that are MISSING or weak in the resume. "
+            "3. The interviewer MUST probe these gaps first to see if the candidate actually possesses the skills. "
+            "4. If the JD requires a specific seniority (e.g., Lead), evaluate them against that bar specifically."
         ) if has_jd else (
-            "No JD provided — base the interview entirely on the resume and role/company context."
+            "No Job Description provided — conduct a standard holistic interview based on the resume and general role expectations."
         )
 
+        is_study_participant = "Corporate Study Participant" in resume_text
+        
         prompt = f"""
         You are an expert recruiter preparing for a {interview_type.upper()} interview round.
         
         TASK:
         1. Extract the candidate's FULL NAME directly from the RESUME. If not found, use "{candidate_name or "the candidate"}".
-        2. Analyze the Resume and Job Description below.
+        {"2. IGNORE RESUME ANALYSIS: This is a standardized study session. Focus purely on the JD and Company profile." if is_study_participant else "2. Analyze the Resume and Job Description below."}
         3. Create a dense, information-rich summary for the interviewer.
 
         {jd_instruction}
@@ -169,9 +172,9 @@ class GeminiClient:
         RULES:
         -   Start with a greeting and an initial question if the history is empty. IMPORTANT: In your very first message, you MUST greet the candidate by their actual name if it is available in the CONTEXT SUMMARY (e.g. "Hi [Name], thank you for joining...").
         -   Be professional, encouraging, but rigorous.
+        -   🚨 **JD PRIORITY**: If the CONTEXT SUMMARY includes a Job Description, you MUST prioritize questions about the technologies and responsibilities mentioned there. Probe for identified 'Skill Gaps' early in the session.
         -   If the candidate struggles, offer a small hint or move to a simpler related topic.
         -   If the candidate answers well, increase difficulty.
-        -   Ensure coverage of key skills from the JD.
         -   Set 'is_coding_question' in the 'next_step' to true if and only if the next question requires the candidate to write or modify code in the provided code editor. Otherwise, set it to false.
 
         

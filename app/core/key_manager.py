@@ -79,7 +79,7 @@ class KeyManager:
 
     def get_gemini_model(self) -> str:
         """Returns the admin-configured Gemini model, falling back to the cost-effective default."""
-        return self._gemini_model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        return self._gemini_model or os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
     def get_groq_model(self) -> str:
         """Returns the admin-configured Groq model, falling back to the cost-effective default."""

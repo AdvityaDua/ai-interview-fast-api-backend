@@ -23,6 +23,7 @@ class StreamingInterviewSession:
             "role": "",
             "company": "",
             "ended": False,
+            "end_reason": "",
             # New accuracy fields
             "questions_asked": [],
             "current_question": "",
@@ -148,6 +149,7 @@ class StreamingInterviewSession:
     def output_tokens(self, value):
         self.state["output_tokens"] = value
 
+
     async def initialize_session(self, user_id: str, session_id: str, resume_text: str, jd_text: str, interview_type: str = "technical", role: str = "", company: str = "", duration: int = 0, candidate_name: str = ""):
         self.start_time = time.time()
         self.duration_limit = duration
@@ -210,6 +212,7 @@ class StreamingInterviewSession:
             await resume_cache.set(resume_text, jd_text, interview_type, role, company, context, initial_skills)
             print(f"[Session] 💾 Cached resume context for future rounds")
 
+
         print(f"[Session] Total init tokens: in={init_input_tokens}, out={init_output_tokens}")
 
         # ── Detect developer role for coding question enforcement ────────────────
@@ -242,6 +245,7 @@ class StreamingInterviewSession:
             "skills_remaining": initial_skills,
             "skills_covered": [],
             "ended": False,
+            "end_reason": "",
             # Accuracy fields
             "questions_asked": [],
             "current_question": "",
@@ -293,6 +297,7 @@ class StreamingInterviewSession:
                     "I'll now begin generating your feedback report. Best of luck!"
                 )
                 self.state["ended"] = True
+                self.state["end_reason"] = "HARD_TIME_LIMIT"
                 yield {"type": "metadata", "is_coding": False}
                 chunk_size = 12
                 for i in range(0, len(closing), chunk_size):
@@ -367,6 +372,7 @@ class StreamingInterviewSession:
             "interviewType": self.state.get("interview_type", ""),
             "role": self.state.get("role", ""),
             "company": self.state.get("company", ""),
+            "endReason": self.state.get("end_reason", ""),
         }
 
         target_url = f"{settings.BACKEND_URL}/analytics/ai-usage"

@@ -10,6 +10,7 @@ from app.services.ai.stt_service import stt_service
 from app.services.ai.audio_analyzer import AudioAnalyzer
 from app.services.ai.gemini_client import GeminiClient
 from app.services.ai.streaming_session import StreamingInterviewSession
+from app.services.ai.company_interviewer import CompanyGeminiClient, CompanyInterviewSession
 
 ws_router = APIRouter()
 
@@ -324,9 +325,17 @@ async def stream_interview_endpoint(
                     print(f"[WS] ================================================")
                     print(f"[WS] Initializing context for {user_id} ({interview_type} round)...")
                     
-                    # Create a fresh session for this new interview
-                    client = GeminiClient()
-                    session = StreamingInterviewSession(client)
+                    # Choose interviewer type: If company is specified, use the specialized CompanyInterviewer (RAG-enabled)
+                    company = init_payload.get("company", "")
+                    if company and len(company.strip()) > 1:
+                        print(f"[WS] 🚀 Specialized Company Interviewer chosen for '{company}'")
+                        client = CompanyGeminiClient()
+                        session = CompanyInterviewSession(client)
+                    else:
+                        print(f"[WS] 🤖 Standard Interviewer chosen")
+                        client = GeminiClient()
+                        session = StreamingInterviewSession(client)
+
                     manager.sessions[user_id] = session
                     manager.audio_metrics[user_id] = []
                     

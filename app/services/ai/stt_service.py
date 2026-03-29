@@ -45,10 +45,12 @@ class DeepgramSTTService:
         # Build WebSocket URL with query params
         params = (
             "model=nova-2"
-            "&language=en"
+            "&language=en-US"
             "&smart_format=true"
             "&interim_results=true"
-            "&endpointing=800"
+            "&endpointing=1500"
+            "&no_delay=true"
+            "&filler_words=true"
             "&encoding=linear16"
             "&sample_rate=16000"
             "&channels=1"

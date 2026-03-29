@@ -31,3 +31,8 @@ scikit-learn
 numpy
 langgraph
 langchain-google-genai
+chromadb
+langchain-text-splitters
+langchain-chroma
+google-generativeai
+pypdf

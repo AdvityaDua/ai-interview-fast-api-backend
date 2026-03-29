@@ -47,7 +47,12 @@ class LLMScorer:
 
         raw = self._call_llm(prompt)
         cleaned = self._extract_json_from_response(raw)
-        return json.loads(cleaned)
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError as jde:
+             # Last resort: try to fix common JSON issues if standard parse fails
+             logger.error(f"JSON Parse Error: {jde} for text: {cleaned[:100]}...")
+             raise json.JSONDecodeError(f"{jde.msg} (raw output was {len(cleaned)} chars)", jde.doc, jde.pos)
 
     # ---------- CV only (legacy alias) ----------
     def evaluate_cv_only(self, cv_text: str) -> dict:
@@ -61,9 +66,9 @@ class LLMScorer:
                     model=self.model,
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        system_instruction="You are a strict JSON generator.",
+                        system_instruction="You are a strict JSON generator. Your output must be valid JSON only. Always escape double quotes and special characters within strings. Do not include trailing commas. Do not include markdown block tokens like ```json at the start or end of your response — return ONLY the raw JSON string.",
                         temperature=self.temperature,
-                        max_output_tokens=3500,
+                        max_output_tokens=4096,
                         response_mime_type="application/json",
                     )
                 )
@@ -96,18 +101,38 @@ class LLMScorer:
 
         raw = self._call_llm(prompt)
         cleaned = self._extract_json_from_response(raw)
-        return json.loads(cleaned)
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError as jde:
+            logger.error(f"JSON Parse Error (Improvement): {jde} for text: {cleaned[:100]}...")
+            raise json.JSONDecodeError(f"{jde.msg} (raw output was {len(cleaned)} chars)", jde.doc, jde.pos)
 
 
     @staticmethod
     def _extract_json_from_response(text: str) -> str:
+        # 1. Basic markdown stripping
         if "```json" in text:
             s = text.find("```json") + 7
             e = text.find("```", s)
-            return text[s:e].strip()
+            text = text[s:e].strip()
         elif "```" in text:
             s = text.find("```") + 3
             e = text.find("```", s)
-            return text[s:e].strip()
-        start, end = text.find("{"), text.rfind("}")
-        return text[start:end+1] if start != -1 and end != -1 else text
+            text = text[s:e].strip()
+        
+        # 2. Extract first level object/array
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1:
+            text = text[start:end+1]
+        
+        # 3. Robust Cleanup (common LLM failure modes)
+        # a) Remove trailing commas before closing braces/brackets
+        import re
+        text = re.sub(r',\s*([\]}])', r'\1', text)
+        
+        # b) Replace literal newlines inside values with \n if they are between quotes
+        # (This is tricky but simple regex can help common cases)
+        # text = re.sub(r'(".*?")', lambda m: m.group(1).replace('\n', '\\n'), text, flags=re.DOTALL)
+        
+        return text.strip()
