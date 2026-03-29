@@ -30,9 +30,10 @@ EVALUATION_SCHEMA = {
                             "dimension": {"type": "STRING"},
                             "score": {"type": "NUMBER"},
                             "max_score": {"type": "NUMBER"},
+                            "reasoning": {"type": "STRING"},
                             "evidence": {"type": "ARRAY", "items": {"type": "STRING"}}
                         },
-                        "required": ["dimension", "score", "max_score", "evidence"]
+                        "required": ["dimension", "score", "max_score", "reasoning", "evidence"]
                     }
                 }
             },
@@ -50,9 +51,10 @@ EVALUATION_SCHEMA = {
                             "dimension": {"type": "STRING"},
                             "score": {"type": "NUMBER"},
                             "max_score": {"type": "NUMBER"},
+                            "reasoning": {"type": "STRING"},
                             "evidence": {"type": "ARRAY", "items": {"type": "STRING"}}
                         },
-                        "required": ["dimension", "score", "max_score", "evidence"]
+                        "required": ["dimension", "score", "max_score", "reasoning", "evidence"]
                     }
                 }
             },

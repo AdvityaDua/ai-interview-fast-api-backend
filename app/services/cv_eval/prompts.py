@@ -15,29 +15,46 @@ UNIFIED_EVALUATION_PROMPT = """You are an expert recruitment specialist with a b
 ### INSTRUCTIONS & RUBRICS
 
 **1. General Rules:**
-- For the `evidence` field, provide direct quotes from the CV.
-- If no evidence is found for a dimension, score it according to the "missing" criteria in the rubric (usually 0).
-- Be constructive. Identify both clear strengths and areas for improvement.
+- **Reasoning First:** For each dimension, use the `reasoning` field to perform a step-by-step analysis.
+- **Evidence:** Provide direct quotes from the CV.
+- **Scoring Logic:** Scoring must be **additive**. Start at 0 and add points based on the presence of specific criteria listed below.
+- **Consistency:** If no evidence exists for a dimension, the score MUST be 0.
 
 **2. PART 1: CV QUALITY (100 points total)**
-- **ats_structure (10):** Professional layout, clear sections, and consistent formatting. Deduct only for major layout issues that genuinely hinder parsing.
-- **writing_clarity (15):** Clear, professional language. Deduct for multiple typos or overly verbose descriptions.
-- **quantified_impact (20):** High scores (15-20) for specific metrics. Mid scores (8-14) for well-described achievements without exact numbers.
-- **technical_depth (15):** Shows understanding of tools and workflows. Higher scores for describing *how* tools were used in context.
-- **projects_portfolio (10):** Relevant projects or links that demonstrate hands-on application.
-- **leadership_skills (10):** Evidence of ownership, mentoring, or team collaboration.
-- **career_progression (10):** Logical growth in responsibilities. Note frequent short tenures (<1 year) only if they form a pattern.
-- **consistency (10):** Uniformity in dates, font styles, and professional tone.
+- **ats_structure (10):** 
+    - [4 pts] Clear, standard sections (Experience, Education, Skills).
+    - [3 pts] Clean, professional layout (no complex multi-columns).
+    - [3 pts] Contact info is present and correctly formatted.
+- **writing_clarity (15):** 
+    - [10 pts] Professional language without typos.
+    - [5 pts] Logical flow and concise bullet points.
+- **quantified_impact (20):** 
+    - [10 pts] Use of any numbers (%, $, #).
+    - [10 pts] Connecting numbers to high-level business outcomes.
+- **technical_depth (15):** 
+    - [8 pts] Tools/Languages are clearly listed.
+    - [7 pts] Describing *how* tools were applied to solve problems.
+- **projects_portfolio (10):** 
+    - [5 pts] Projects are described.
+    - [5 pts] Links to GitHub, Portfolio, or live demos are present.
+- **leadership_skills (10):** 
+    - [5 pts] Mentoring, team leading, or ownership of a feature.
+    - [5 pts] Collaboration with cross-functional teams.
+- **career_progression (10):** 
+    - [5 pts] Increasing responsibility or title hierarchy.
+    - [5 pts] Logical timeline without unexplained major gaps.
+- **consistency (10):** 
+    - [10 pts] Uniform fonts, date formats, and layout across the entire document.
 
 **3. PART 2: JOB MATCH (100 points total)**
-- **hard_skills (35):** Match between candidate's core technical stack and the JD's requirements.
-- **responsibilities (15):** Overlap in past duties and the expected role.
-- **domain_relevance (10):** Familiarity with the industry or similar business models.
-- **seniority (10):** Alignment with the requested experience level.
-- **nice_to_haves (5):** Credit for bonus skills mentioned in the JD.
-- **education_certs (5):** Relevant academic background or certifications.
-- **recent_achievements (10):** Relevancy of the candidate's most recent 1-2 roles.
-- **constraints (10):** Alignment with location, work schedule, or travel requirements.
+- **hard_skills (35):** 1:1 match of core technical requirements.
+- **responsibilities (15):** Overlap in core past duties.
+- **domain_relevance (10):** Industry-specific experience.
+- **seniority (10):** Alignment with years of experience requested.
+- **nice_to_haves (10):** Bonus points for optional skills mentioned.
+- **education_certs (5):** Required degrees or relevant certifications.
+- **recent_achievements (10):** Relevancy of the most recent 2 years of work.
+- **constraints (5):** Alignment with location/remote rules (if stated).
 
 **4. PART 3: KEY TAKEAWAYS**
 - **red_flags:** Identify genuine deal-breakers or significant risks.
@@ -67,18 +84,19 @@ CV_ONLY_EVALUATION_PROMPT = """You are an expert recruitment specialist. Your ta
 ### INSTRUCTIONS & RUBRICS
 
 **1. General Rules:**
-- Evidence must be direct quotes.
-- No evidence = 0 score.
+- **Reasoning First:** For each dimension, use the `reasoning` field to perform a step-by-step analysis.
+- **Evidence:** Use direct quotes ONLY. 
+- **Additive Scoring:** Start at 0 and add points based on the presence of the criteria below.
 
 **2. PART 1: CV QUALITY (100 points total)**
-- **ats_structure (10):** Clear, professional, and well-organized.
-- **writing_clarity (15):** Concise and error-free.
-- **quantified_impact (20):** Value metrics (15-20) or clear achievement descriptions (8-14).
-- **technical_depth (15):** Evidence of technical competency and context.
-- **projects_portfolio (10):** Meaningful work samples or projects.
-- **leadership_skills (10):** Collaboration and ownership skills.
-- **career_progression (10):** Fair assessment of professional growth.
-- **consistency (10):** Logical and aesthetic uniformity.
+- **ats_structure (10):** Clear sections (5pts), Professional Header (2.5pts), Consistent Fonts (2.5pts).
+- **writing_clarity (15):** No typos (10pts), Professional tone (5pts).
+- **quantified_impact (20):** Metrics and KPIs present (10pts), results linked to business value (10pts).
+- **technical_depth (15):** Explicit tool usage (8pts), clear technical context (7pts).
+- **projects_portfolio (10):** Project descriptions (5pts), Portfolio/GitHub links (5pts).
+- **leadership_skills (10):** Ownership/Mentoring (5pts), Collaboration (5pts).
+- **career_progression (10):** Upward role trajectory (5pts), Stable employment history (5pts).
+- **consistency (10):** Aesthetic and temporal uniformity (10pts).
 
 **3. PART 2: KEY TAKEAWAYS**
 - **red_flags:** Significant gaps or risks to be aware of.

@@ -192,7 +192,7 @@ class DimensionScores(BaseModel):
 class EvaluationDetail(BaseModel):
     strengths: List[str]
     weaknesses: List[str]
-    ideal_answer_outline: List[str]
+    ideal_answer_outline: Optional[List[str]] = None
 
 class QuestionAnalysis(BaseModel):
     question_id: int
@@ -221,8 +221,26 @@ class Verdict(BaseModel):
     areas_to_fix_before_next_interview: List[str]
     final_recommendation_text: str
 
-class FinalEvaluation(BaseModel):
-    """Schema for the final comprehensive report."""
+# --- Tiered Final Evaluation Models ---
+
+class FinalEvaluationFree(BaseModel):
+    """Schema for the FREE tier — minimal tokens."""
+    summary: Summary
+    dimension_scores: DimensionScores
+    skill_gap_analysis: SkillGapAnalysis
+    verdict: Verdict
+
+class FinalEvaluationCareerStarter(BaseModel):
+    """Schema for the 99 plan report (Career Starter) — adds question analysis (no ideal answer) and behavioral."""
+    summary: Summary
+    dimension_scores: DimensionScores
+    question_wise_analysis: List[QuestionAnalysis]
+    skill_gap_analysis: SkillGapAnalysis
+    behavioral_insights: BehavioralInsights
+    verdict: Verdict
+
+class FinalEvaluationProfessional(BaseModel):
+    """Schema for the full comprehensive report (Professional)"""
     summary: Summary
     dimension_scores: DimensionScores
     question_wise_analysis: List[QuestionAnalysis]

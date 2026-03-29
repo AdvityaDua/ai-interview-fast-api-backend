@@ -77,7 +77,7 @@ class ResumeEnhancerService:
         
         TASK:
         Return a JSON object matching the `ResumeBuilderResponse` schema.
-        - Structure `personal_info` accurately. Use the `user_info` email if provided. DO NOT use generic or dummy names (like "Akash Bargoti" or "John Doe") if personal info is not provided; leave the name as empty string or "[Your Name]" instead. Extract correct phone, GitHub, LinkedIn, and education directly from RAW RESUME TEXT.
+        - Structure `personal_info` accurately. Use the `user_info` email if provided. Extract correct phone, GitHub, LinkedIn, and education directly from RAW RESUME TEXT.
         - Categorize `skills` into `frontend`, `backend`, and `tools_cloud`.
         - Provide `experience` descriptions as impactful bullet point lists. Use EXACT history from RAW RESUME TEXT.
         - Ensure `projects` have `technologies` (list) and `highlights` (bullets).

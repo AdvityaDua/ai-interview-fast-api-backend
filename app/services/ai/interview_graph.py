@@ -66,6 +66,9 @@ class InterviewState(TypedDict):
     input_tokens: int
     output_tokens: int
 
+    # Subscription plan (free | 99 | 199)
+    plan: str
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Question budget by duration
@@ -580,11 +583,12 @@ the part they left unfinished.
                 f"  Do NOT move to a new skill until this gap is properly addressed."
             )
 
-        # ── Coding mandate for developer roles ──
+        # ── Coding mandate for developer roles (ONLY in Technical/Problem rounds) ──
         is_developer = state.get("is_developer_role", False)
+        interview_type = state.get("interview_type", "technical")
         coding_asked = state.get("coding_questions_asked", 0)
         coding_block = ""
-        if is_developer and answer_type not in ("end_requested",):
+        if is_developer and interview_type in ("technical", "problem") and answer_type not in ("end_requested",):
             if coding_asked == 0 and turn_number >= 2 and answer_type not in ("confused", "wait_requested"):
                 coding_block = (
                     "\n💻 CODING MANDATE: This is a developer candidate and NO coding question has been asked yet. "
@@ -636,16 +640,25 @@ the part they left unfinished.
 
         # ── JD precedence block ──
         has_jd = state.get("has_jd", False)
+        interview_type = state.get("interview_type", "technical")
         jd_precedence_block = ""
         if has_jd:
-            jd_precedence_block = (
-                "\n📋 JD PROVIDED — QUESTION PRIORITY ORDER:\n"
-                "  1. FIRST probe skills listed under 'JD Required Skills' in CANDIDATE CONTEXT — these are what the employer needs.\n"
-                "  2. THEN explore 'Matched Skills' (candidate has them, JD wants them) — validate actual depth.\n"
-                "  3. THEN probe 'Missing Skills' (JD requires, resume lacks) — these are the most important gaps.\n"
-                "  4. LAST explore resume depth on skills NOT in the JD.\n"
-                "  If you're choosing between two topics of equal interest, always pick the JD-required one.\n"
-            )
+            if interview_type in ("technical", "problem"):
+                jd_precedence_block = (
+                    "\n📋 JD PROVIDED — QUESTION PRIORITY ORDER:\n"
+                    "  1. FIRST probe skills listed under 'JD Required Skills' in CANDIDATE CONTEXT — these are what the employer needs.\n"
+                    "  2. THEN explore 'Matched Skills' (candidate has them, JD wants them) — validate actual depth.\n"
+                    "  3. THEN probe 'Missing Skills' (JD requires, resume lacks) — these are the most important gaps.\n"
+                    "  4. LAST explore resume depth on skills NOT in the JD.\n"
+                    "  If you're choosing between two topics of equal interest, always pick the JD-required one.\n"
+                )
+            else: # HR / Behavioral
+                jd_precedence_block = (
+                    "\n📋 JD PROVIDED — CULTURAL FIT PRIORITY:\n"
+                    "  1. Use the JD to understand the role's mission and team environment.\n"
+                    "  2. Focus on how the candidate's values and past behavior align with this specific company's needs.\n"
+                    "  3. Do NOT focus on technical skill gaps—instead, look for alignment in soft skills required for the role.\n"
+                )
 
         prompt = f"""You are an expert interviewer conducting a {state['interview_type'].upper()} interview.
 
@@ -682,7 +695,7 @@ INTERVIEW TYPE RULES:
 {'═' * 60}
 
 INSTRUCTIONS:
-1. Opening turn (turn 0): greet candidate BY NAME from CANDIDATE CONTEXT; ask a single warm-up question about their PRIMARY TECHNOLOGY listed in the resume or JD.
+1. Realistic Opening (turn 0): Greet the candidate warmly BY NAME. Identify yourself as the interviewer for this specific {interview_type} round. Set the stage by explaining the focus of this session in one sentence. Finally, ask a single introductory question about their background or interest in the role to start the conversation naturally. Do NOT start with a technical deep-dive or a coding challenge.
 2. All other turns: apply the routing strategy above FIRST, then pick the best next question.
 3. ALWAYS anchor questions to the candidate's stated experience and stack. Never ask generic language-agnostic questions when their tech stack is known.
 4. If a JD is present (see 📋 JD block above): prioritise JD-required skills and gaps over resume exploration.

@@ -3,7 +3,12 @@ import os
 from google import genai
 from google.genai import types
 from typing import List, Optional
-from .schemas import QuestionEvaluation, FinalEvaluation, MidInterviewSnapshot
+from .schemas import (
+    QuestionEvaluation, MidInterviewSnapshot, FinalEvaluationFree, 
+    FinalEvaluationCareerStarter, FinalEvaluationProfessional,
+    Verdict, Summary, DimensionScores, QuestionAnalysis, EvaluationDetail,
+    SkillGapAnalysis, BehavioralInsights, ImprovementPlan
+)
 from app.core.key_manager import key_manager
 
 class GeminiClient:
@@ -31,15 +36,24 @@ class GeminiClient:
         {jd_text}
         """ if has_jd else "JOB DESCRIPTION: Not provided."
 
-        jd_instruction = (
-            "⚠ JD IS PROVIDED: The interviewer MUST prioritise skills, technologies, "
-            "and responsibilities listed in the JD above everything else. "
-            "If a skill appears in the JD but not the resume, flag it clearly as a gap to probe. "
-            "Questions must validate the candidate against the JD requirements first, "
-            "then explore resume depth."
-        ) if has_jd else (
-            "No JD provided — base the interview entirely on the resume and role/company context."
-        )
+        if has_jd:
+            if interview_type in ["hr", "behavioral"]:
+                jd_instruction = (
+                    "⚠ JD IS PROVIDED: The interviewer should understand the role's responsibilities, "
+                    "but must focus on evaluating SOFT SKILLS, professional values, and cultural fit "
+                    "rather than technical specifics. Do NOT probe deeply into technical gaps unless "
+                    "they directly impact the candidate's career trajectory or motivation."
+                )
+            else:
+                jd_instruction = (
+                    "⚠ JD IS PROVIDED: The interviewer MUST prioritise skills, technologies, "
+                    "and responsibilities listed in the JD above everything else. "
+                    "If a skill appears in the JD but not the resume, flag it clearly as a gap to probe. "
+                    "Questions must validate the candidate against the JD requirements first, "
+                    "then explore resume depth."
+                )
+        else:
+            jd_instruction = "No JD provided — base the interview entirely on the resume and role/company context."
 
         prompt = f"""
         You are an expert recruiter preparing for a {interview_type.upper()} interview round.
@@ -194,7 +208,7 @@ class GeminiClient:
         )
         return QuestionEvaluation.model_validate_json(response.text)
 
-    async def generate_feedback(self, history: List[dict], context_summary: str) -> FinalEvaluation:
+    async def generate_feedback(self, history: List[dict], context_summary: str, plan: str = "free") -> tuple:
         prompt_history = "INTERVIEW HISTORY:\n"
         user_msg_count = 0
         for turn in history:
@@ -207,9 +221,50 @@ class GeminiClient:
         if user_msg_count == 0:
             raise ValueError("Insufficient Data: The candidate did not answer any questions during the interview. No meaningful evaluation can be generated.")
             
+        interviewer_persona = {
+            "technical": "expert technical interviewer",
+            "behavioral": "expert behavioral and soft-skills evaluator",
+            "problem": "expert problem-solving and analytical coach",
+            "hr": "expert HR specialist and cultural fit evaluator"
+        }.get(history[0].get("interview_type", "technical") if history else "technical", "expert recruiter")
+
+        # 1. Free Tier
+        if plan == "free":
+            response_schema = FinalEvaluationFree
+            plan_instructions = (
+                "CRITICAL INSTRUCTION (FREE TIER):\n"
+                "Return ONLY the summary, dimension_scores, skill_gap_analysis, and verdict.\n"
+                "DO NOT include question_wise_analysis, behavioral_insights, or improvement_plan."
+            )
+        # 2. Career Starter (99 Plan equivalent)
+        elif plan in ["career_starter", "99"]:
+            response_schema = FinalEvaluationCareerStarter
+            plan_instructions = (
+                "CRITICAL INSTRUCTION (CAREER STARTER TIER):\n"
+                "Return summary, dimension_scores, skill_gap_analysis, verdict, behavioral_insights, and question_wise_analysis.\n"
+                "For question_wise_analysis, provide ONLY strengths and weaknesses. DO NOT include ideal_answer_outline.\n"
+                "DO NOT include improvement_plan."
+            )
+        # 3. Professional (199 Plan equivalent)
+        elif plan in ["professional", "199"]:
+            response_schema = FinalEvaluationProfessional
+            plan_instructions = (
+                "CRITICAL INSTRUCTION (PROFESSIONAL TIER):\n"
+                "Generate the full comprehensive report. Include all sections: summary, dimension_scores, "
+                "question_wise_analysis (with strengths, weaknesses AND ideal_answer_outline), "
+                "skill_gap_analysis, behavioral_insights, and improvement_plan."
+            )
+        else:
+            # Fallback to free
+            response_schema = FinalEvaluationFree
+            plan_instructions = (
+                "CRITICAL INSTRUCTION:\n"
+                "Return ONLY the summary, dimension_scores, skill_gap_analysis, and verdict."
+            )
+
         prompt = f"""
-        You are an expert technical interviewer. The interview has ended.
-        Provide a comprehensive final evaluation of the candidate.
+        You are an {interviewer_persona}. The interview has ended.
+        Your goal: {plan_instructions}
         
         CONTEXT SUMMARY:
         {context_summary}
@@ -217,24 +272,12 @@ class GeminiClient:
         {prompt_history}
         
         IMPORTANT INSTRUCTIONS:
-        - DO NOT MAKE UP OR HALLUCINATE ANY DATA. ONLY EVALUATE BASED ON THE ACTUAL CONVERSATION HISTORY. If the candidate answered very little, strictly mention that the candidate did not provide enough details, and score them accordingly.
-        - You MUST include EVERY SINGLE question you asked during the interview as a separate entry in question_wise_analysis.
-        - Do NOT consolidate or merge questions. Each question gets its own entry.
-        - Number the question_ids sequentially starting from 1.
-        - The overall_score in summary should be out of 100. IMPORTANT: Do NOT simply take the mathematical average of individual question scores.
-        - The overall_score should be a holistic assessment of the candidate's readiness for the role.
-        - Prioritize core technical skills and problem-solving over greetings or simple introductory questions.
-        - If the candidate performed exceptionally on difficult topics but missed minor points, the overall_score should reflect that high level of skill.
-        - Conversely, if the candidate failed core role requirements from the JD, the overall_score should reflect that lack of readiness, even if they answered other questions correctly.
-        - Each individual question score should be out of 10.
-
-        - For the IMPROVEMENT PLAN, you MUST provide:
-            1. immediate_actions: Things to do in the next 24-48 hours.
-            2. 1_week_plan: Focused study and practice for the next 7 days.
-            3. 1_month_plan: Longer-term skill development for the next 30 days.
-        - You MUST populate EVERY SINGLE FIELD in the JSON schema. Do not leave any field as null or empty unless the schema explicitly allows it (and even then, prefer providing data).
-        
-        Generate the final detailed evaluation report.
+        - DO NOT MAKE UP OR HALLUCINATE ANY DATA. ONLY EVALUATE BASED ON THE ACTUAL CONVERSATION HISTORY.
+        - Overall score should be out of 100.
+        - Dimension scores should be out of 10.
+        - If the plan allows (199 or 99), each question gets its own entry in question_wise_analysis.
+        - For the 199 plan ONLY, include a detailed Improvement Plan with immediate, 1-week, and 1-month actions.
+        - Populate EVERY SINGLE FIELD required by the JSON schema: {response_schema.__name__}.
         """
         
         response = await asyncio.to_thread(
@@ -243,7 +286,7 @@ class GeminiClient:
             contents=prompt,
             config={
                 "response_mime_type": "application/json",
-                "response_schema": FinalEvaluation,
+                "response_schema": response_schema,
             },
         )
         
@@ -254,7 +297,7 @@ class GeminiClient:
             usage["output_tokens"] = getattr(response.usage_metadata, 'candidates_token_count', 0)
             print(f"[GeminiClient] generate_feedback usage: in={usage['input_tokens']}, out={usage['output_tokens']}")
         
-        evaluation = FinalEvaluation.model_validate_json(response.text)
+        evaluation = response_schema.model_validate_json(response.text)
         return evaluation, usage
 
     def connect_live(self, system_instruction: str):

@@ -40,6 +40,7 @@ class StreamingInterviewSession:
             "topic_question_counts": {},
             "input_tokens": 0,
             "output_tokens": 0,
+            "plan": "free",
         }
         self.start_time: float = 0.0
         self.duration_limit: int = 0
@@ -148,7 +149,7 @@ class StreamingInterviewSession:
     def output_tokens(self, value):
         self.state["output_tokens"] = value
 
-    async def initialize_session(self, user_id: str, session_id: str, resume_text: str, jd_text: str, interview_type: str = "technical", role: str = "", company: str = "", duration: int = 0, candidate_name: str = ""):
+    async def initialize_session(self, user_id: str, session_id: str, resume_text: str, jd_text: str, interview_type: str = "technical", role: str = "", company: str = "", duration: int = 0, candidate_name: str = "", plan: str = "free"):
         self.start_time = time.time()
         self.duration_limit = duration
         max_q = _max_questions_for_duration(duration)
@@ -259,6 +260,7 @@ class StreamingInterviewSession:
             "topic_question_counts": {},
             "input_tokens": init_input_tokens,
             "output_tokens": init_output_tokens,
+            "plan": plan,
         })
 
     def get_time_context(self) -> str:

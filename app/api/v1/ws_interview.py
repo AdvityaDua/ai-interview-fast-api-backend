@@ -3,7 +3,9 @@ import asyncio
 import os
 import re
 from dataclasses import asdict
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
+import httpx
+from app.core.config import settings
 from app.api.ws_manager import manager
 from app.api.ws_dependencies import get_ws_current_user
 from app.services.ai.stt_service import stt_service
@@ -202,7 +204,8 @@ def _aggregate_audio_metrics(metrics_list: list[dict]) -> dict:
 async def stream_interview_endpoint(
     websocket: WebSocket, 
     client_id: str,
-    user_payload: dict = Depends(get_ws_current_user)
+    user_payload: dict = Depends(get_ws_current_user),
+    token: str = Query(None)
 ):
     """
     **Full-Duplex Interview Chat WebSocket**
@@ -266,6 +269,37 @@ async def stream_interview_endpoint(
                     company = init_payload.get("company", "")
                     duration = init_payload.get("duration", 0)
                     candidate_name = init_payload.get("candidate_name", "")
+
+                    # ── Fetch user plan securely from NestJS backend ──
+                    plan = "free"
+                    if token:
+                        try:
+                            # Using a brief timeout; failing fast falls back to free
+                            async with httpx.AsyncClient(timeout=3.0) as client:
+                                r = await client.get(
+                                    f"{settings.BACKEND_URL}/users/me",
+                                    headers={"Authorization": f"Bearer {token}"}
+                                )
+                                if r.status_code == 200:
+                                    user_data = r.json()
+                                    sub_plan = user_data.get("subscriptionPlan")
+                                    if sub_plan:
+                                        plan_name = str(sub_plan.get("name", "")).lower()
+                                        display_name = str(sub_plan.get("displayName", "")).lower()
+                                        
+                                        if "pro_tier_100" in plan_name or "career starter" in display_name:
+                                            plan = "career_starter"
+                                        elif "pro_tier_200" in plan_name or "professional" in display_name:
+                                            plan = "professional"
+                        except Exception as e:
+                            print(f"[WS] Warning: Failed to fetch user plan from backend: {e}")
+                    
+                    # ── University Students get Professional Plan Metrics ──
+                    if user_payload.get("universityId"):
+                        plan = "professional"
+                        print(f"[WS] University student detected. Upgrading plan to {plan}")
+                    
+                    print(f"[WS] User {user_id} active plan resolved to: {plan}")
 
                     # ── Debug: print everything received ──
                     print(f"[WS] ============ INIT PAYLOAD RECEIVED ============")
@@ -341,7 +375,8 @@ async def stream_interview_endpoint(
                             role, 
                             company, 
                             duration,
-                            candidate_name
+                            candidate_name,
+                            plan
                         )
                         await manager.send_json({"type": "info", "content": "Context initialized."}, user_id)
                         
@@ -392,7 +427,7 @@ async def stream_interview_endpoint(
                         await manager.send_json({"type": "info", "content": "Interview complete. Generating feedback..."}, user_id)
                         
                         try:
-                            feedback, feedback_usage = await session.client.generate_feedback(session.history, session.context_summary)
+                            feedback, feedback_usage = await session.client.generate_feedback(session.history, session.context_summary, plan=session.state.get("plan", "free"))
                             
                             # Add feedback generation tokens to session
                             session.input_tokens += feedback_usage.get("input_tokens", 0)
@@ -448,7 +483,7 @@ async def stream_interview_endpoint(
 
                 await manager.send_json({"type": "info", "content": "Ending session. Generating analysis..."}, user_id)
                 try:
-                    feedback, feedback_usage = await session.client.generate_feedback(session.history, session.context_summary)
+                    feedback, feedback_usage = await session.client.generate_feedback(session.history, session.context_summary, plan=session.state.get("plan", "free"))
                     
                     # Add feedback generation tokens to session
                     session.input_tokens += feedback_usage.get("input_tokens", 0)
