@@ -30,7 +30,15 @@ settings = Settings()
 # Explicitly export the credentials path to the OS environment so GCP client libraries can find it
 if settings.GOOGLE_APPLICATION_CREDENTIALS:
     import os
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.GOOGLE_APPLICATION_CREDENTIALS
+    creds_path = settings.GOOGLE_APPLICATION_CREDENTIALS
+    
+    # Resolve relative path if provided (relative to the 'ai' root where .env resides)
+    if not os.path.isabs(creds_path):
+        import pathlib
+        base_dir = pathlib.Path(__file__).parent.parent.parent.resolve()
+        creds_path = str(base_dir / creds_path)
+    
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_path
 
 API_DESCRIPTION = """
 🚀 **Ai for job API**
