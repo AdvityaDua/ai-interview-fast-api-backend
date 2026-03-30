@@ -92,12 +92,10 @@ class NextStep(BaseModel):
     is_coding_question: bool = Field(
         False,
         description=(
-            "True ONLY when the question explicitly asks the candidate to WRITE or TYPE actual code/syntax in the editor. "
-            "Examples that are TRUE: 'Implement a function that...', 'Write a solution for...', 'Code a component that...'. "
-            "Examples that are FALSE (MUST be false): 'Describe how you optimized...', 'Tell me about a project...', "
-            "'Explain your approach to...', 'What techniques did you use...', 'Walk me through...', "
-            "ANY question that starts with Describe/Explain/Tell/Walk/What/How/Why. "
-            "If the question asks them to TALK or EXPLAIN, this is false. Only set true when they must TYPE code."
+            "True ONLY when the question explicitly requires the candidate to WRITE or TYPE actual code, syntax, "
+            "or an algorithm in the editor. Set to TRUE for 'Implement X...', 'Write a function for...', "
+            "'Code a component that...', etc. Set to FALSE for purely verbal/conceptual questions "
+            "where 'Describe...', 'Explain...', or 'Tell me about...' is the primary goal."
         )
     )
 

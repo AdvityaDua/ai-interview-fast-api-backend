@@ -76,12 +76,12 @@ def _max_questions_for_duration(duration_minutes: int) -> int:
     if duration_minutes <= 0:
         return 0        # unlimited
     if duration_minutes <= 15:
-        return 8        # 15 min  → up to 8 questions
+        return 8        # 15 min  → 8 questions
     if duration_minutes <= 30:
-        return 13       # 30 min  → up to 13 questions
+        return 13       # 30 min  → 13 questions
     if duration_minutes <= 45:
-        return 18       # 45 min  → up to 18 questions
-    return 22           # 60 min  → up to 22 questions
+        return 16       # 45 min  → 16 questions
+    return 18           # 60 min  → 18 questions
 
 
 def _max_questions_per_topic(duration_minutes: int) -> int:
@@ -381,7 +381,7 @@ STEP 5 — follow_up_hint: specific gap to probe IF should_follow_up is true. Em
         max_q = state.get("max_questions", 0)
         question_limit_block = ""
         if max_q > 0:
-            questions_used = len(questions_asked)   # = number of questions so far
+            questions_used = len(questions_asked)
             questions_left = max_q - questions_used
             if questions_left <= 0:
                 # Hard limit reached — force END immediately
@@ -588,15 +588,15 @@ the part they left unfinished.
         coding_asked = state.get("coding_questions_asked", 0)
         coding_block = ""
         if is_developer and answer_type not in ("end_requested",):
-            if coding_asked == 0 and turn_number >= 2 and answer_type not in ("confused", "wait_requested"):
+            if coding_asked == 0 and turn_number >= 1 and answer_type not in ("confused", "wait_requested"):
                 coding_block = (
                     "\n💻 CODING MANDATE: This is a developer candidate and NO coding question has been asked yet. "
                     "You MUST ask a hands-on coding problem THIS TURN — set is_coding_question=true. "
-                    "Requirements: (1) Use a problem directly relevant to their primary stack from CANDIDATE CONTEXT. "
+                    "Requirements: (1) Use exactly ONE specific problem directly relevant to their stack (or a generic DSA problem from RAG if in a Company Round). "
                     "(2) Match their seniority level — for senior candidates, no trivial problems. "
                     "(3) State the problem clearly in plain English — one paragraph max. "
                     "(4) Do NOT combine a verbal question with the coding task in the same turn. "
-                    "This is not optional — asking only verbal questions to a developer is a failure."
+                    "This is not optional — asking only verbal questions to a developer for the entire round is a failure."
                 )
             elif coding_asked == 1 and turn_number >= 5 and answer_type not in ("confused", "refused", "wait_requested"):
                 coding_block = (
@@ -655,16 +655,14 @@ the part they left unfinished.
         company_round_block = ""
         if company and len(company.strip()) > 1:
             company_round_block = f"""
-🚨 SPECIALIZED {company.upper()} ROUND RULES (STRICT):
-1. IGNORE RESUME: Do NOT analyze or ask about the candidate's personal resume, projects, or background. Skip all resume-based questions.
-2. STRICT RAG GROUNDING: You MUST ask questions ONLY from the 'QUESTION BANK & INTEL (RAG)' section provided in the context below. 
-   - Do NOT invent new technical questions. 
-   - If the RAG context contains a list of questions, pick from them sequentially or based on topic flow.
-3. INTERVIEW FLOW:
-   - TURN 0: Professional greeting + exactly ONE introductory question about why they want to join {company}.
-   - TURN 1 onwards: Transition into the technical questions found in the RAG context.
-4. LIMITED PROCEEDINGS: You may ask a single follow-up ("cross-question") if their answer was incomplete, but then you MUST move to the next RAG question. 
-5. NO GENERIC CONTENT: Do not ask standard language fundamental questions unless they are explicitly in the RAG intel.
+🚨 SPECIALIZED {company.upper()} ROUND RULES (KNOWLEDGE ASSESSMENT):
+1. RAG & JD FOCUS: Your PRIMARY source for technical evaluation is the Job Description and the 'QUESTION BANK & INTEL (RAG)' below. 
+2. NO PERSONAL BACKGROUND: Do NOT ask about their resume, projects, or background. Treat them as a candidate being evaluated purely for their alignment with the JD requirements.
+3. OPENING TURN (MANDATORY): Start by referencing the specific technical requirements for this role (e.g., 'This role requires expertise in Microservices and Node.js...') and ask an introductory knowledge-based question related to those core topics.
+4. CODING CHALLENGES: Following the intro, transition into the technical/coding tasks from the RAG bank.
+5. INTERVIEW FLOW:
+   - Turn 0: Professional greeting + Opening bridge (JD requirement -> 'What is your understanding of...').
+   - Turn 1+: Deep technical drills and coding assessments from the RAG context.
 """
 
         prompt = f"""You are an expert interviewer conducting a {state['interview_type'].upper()} interview.
@@ -719,24 +717,9 @@ INSTRUCTIONS:
    - NEVER combine a conceptual question AND a coding task in the same turn.
    - If you have two things to ask, pick the more important one and save the other for the NEXT turn.
    - Violation: "Explain X, and also write a component that does Y" → FORBIDDEN.
-8. is_coding_question=true when asking them to WRITE/TYPE actual code OR show written work in the editor.
-   — TRUE (code):      "Implement a function that...", "Write a solution for...", "Code a component that...", "Write a query that..."
-   — TRUE (show work): Any question that EXPLICITLY asks the candidate to show calculations, derivations, step-by-step
-                       numeric examples, or worked math — even if it starts with "walk me through" or "can you show".
-                       Trigger phrases that MUST set is_coding_question=true:
-                         • "showing the calculations involved"
-                         • "show the calculations / show your working / show the math"
-                         • "show me how X operates with specific values / weights / numbers"
-                         • "demonstrate with a worked example / numerical example"
-                         • "walk me through the steps showing the actual numbers"
-                         • "show step by step with values"
-   — FALSE (verbal): "Describe how you...", "Tell me about a project...", "Explain your approach...",
-                     "What techniques did you use...", "How did you optimise...", "Why did you choose..."
-                     "Walk me through your thinking..." (NO numbers/calculations explicitly requested)
-   — RULE: The presence of "showing the calculations", "show the math", "show your work", "worked example",
-           "specific values/weights" anywhere in the question → is_coding_question=true, even if the
-           question starts with Walk / How / Can you.
-   — RULE: Pure verbal/conceptual questions (no explicit request to show written work) → is_coding_question=false.
+8. is_coding_question=true when asking them to WRITE/TYPE actual code OR show written work.
+   — MANDATORY: Set to true if you are asking for an implementation, an algorithm, or a specific piece of syntax.
+   — FALSE (verbal): High-level conceptual questions (What is X? How does Y work?) where no actual code is needed to explain.
    — RULE: NEVER set is_coding_question=true on a confused / rephrase turn.
 9. action=END only when: candidate explicitly requested to end, time is truly up, or all key JD+resume topics thoroughly explored.
    — MANDATORY MINIMUM: For Behavioral, HR, and Problem Solving rounds, do NOT set action=END before at least 5-6 questions have been asked (turn_number >= 5). 

@@ -27,6 +27,11 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+# Explicitly export the credentials path to the OS environment so GCP client libraries can find it
+if settings.GOOGLE_APPLICATION_CREDENTIALS:
+    import os
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.GOOGLE_APPLICATION_CREDENTIALS
+
 API_DESCRIPTION = """
 🚀 **Ai for job API**
 
