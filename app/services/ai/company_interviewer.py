@@ -69,7 +69,7 @@ class CompanyInterviewSession(StreamingInterviewSession):
         """Find a KnowledgeTopic by name and fetch its vector grounding."""
         if not company or len(company) < 2: return ""
         try:
-            target_url = f"{settings.BACKEND_URL}/knowledge/topics/find-by-name?name={company}"
+            target_url = f"{settings.BACKEND_URL}/knowledge/topics/find-by-name?name={company}&all=true"
             print(f"[CompanySession] Checking for company knowledge: {target_url}")
             async with httpx.AsyncClient() as client:
                 res = await client.get(target_url, timeout=5.0)
