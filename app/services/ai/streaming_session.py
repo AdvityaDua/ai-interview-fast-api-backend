@@ -41,6 +41,8 @@ class StreamingInterviewSession:
             "topic_question_counts": {},
             "input_tokens": 0,
             "output_tokens": 0,
+            "rag_tokens": 0,
+            "is_vertex": False,
         }
         self.start_time: float = 0.0
         self.duration_limit: int = 0
@@ -149,6 +151,22 @@ class StreamingInterviewSession:
     def output_tokens(self, value):
         self.state["output_tokens"] = value
 
+    @property
+    def rag_tokens(self):
+        return self.state.get("rag_tokens", 0)
+
+    @rag_tokens.setter
+    def rag_tokens(self, value):
+        self.state["rag_tokens"] = value
+
+    @property
+    def is_vertex(self):
+        return self.state.get("is_vertex", False)
+
+    @is_vertex.setter
+    def is_vertex(self, value):
+        self.state["is_vertex"] = value
+
 
     async def initialize_session(self, user_id: str, session_id: str, resume_text: str, jd_text: str, interview_type: str = "technical", role: str = "", company: str = "", duration: int = 0, candidate_name: str = ""):
         self.start_time = time.time()
@@ -157,8 +175,10 @@ class StreamingInterviewSession:
         print(f"[Session] duration={duration}min → max_questions={max_q} max_confusion_retries={_max_confusion_retries_for_duration(duration)}")
         
         # ── Token accounting ────────────────────────────────────────────────────
-        init_input_tokens  = 0
-        init_output_tokens = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.rag_tokens = 0
+        self.is_vertex = bool(getattr(settings, 'GOOGLE_APPLICATION_CREDENTIALS', None))
 
         # ── 1. Try to restore from resume context cache ─────────────────────────
         #       This skips the 2 most expensive init LLM calls entirely.
@@ -175,8 +195,8 @@ class StreamingInterviewSession:
             # ── CACHE MISS: run LLM calls and cache the result ───────────────────
             # 1a. Static context summarization
             context, context_usage = await self.client.summarize_context(resume_text, jd_text, interview_type, role, company, candidate_name)
-            init_input_tokens  += context_usage.get("input_tokens", 0)
-            init_output_tokens += context_usage.get("output_tokens", 0)
+            self.input_tokens  += context_usage.get("input_tokens", 0)
+            self.output_tokens += context_usage.get("output_tokens", 0)
             
             # 1b. Extract skills for structured tracking (priority-ordered, JD first)
             _dev_hint = (
@@ -204,8 +224,8 @@ class StreamingInterviewSession:
             initial_skills = [s.strip() for s in skills_res.text.split(',') if s.strip()][:12]
             
             if hasattr(skills_res, 'usage_metadata'):
-                init_input_tokens  += getattr(skills_res.usage_metadata, 'prompt_token_count', 0)
-                init_output_tokens += getattr(skills_res.usage_metadata, 'candidates_token_count', 0)
+                self.input_tokens  += getattr(skills_res.usage_metadata, 'prompt_token_count', 0)
+                self.output_tokens += getattr(skills_res.usage_metadata, 'candidates_token_count', 0)
                 print(f"[Session] skills extraction usage: in={getattr(skills_res.usage_metadata, 'prompt_token_count', 0)}, out={getattr(skills_res.usage_metadata, 'candidates_token_count', 0)}")
 
             # ── Store in cache so future rounds are free ─────────────────────────
@@ -213,7 +233,7 @@ class StreamingInterviewSession:
             print(f"[Session] 💾 Cached resume context for future rounds")
 
 
-        print(f"[Session] Total init tokens: in={init_input_tokens}, out={init_output_tokens}")
+        print(f"[Session] Total init tokens: in={self.input_tokens}, out={self.output_tokens}")
 
         # ── Detect developer role for coding question enforcement ────────────────
         _developer_keywords = (
@@ -261,8 +281,8 @@ class StreamingInterviewSession:
             "max_questions_per_topic": _max_questions_per_topic(duration),
             "max_confusion_retries": _max_confusion_retries_for_duration(duration),
             "topic_question_counts": {},
-            "input_tokens": init_input_tokens,
-            "output_tokens": init_output_tokens,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
         })
 
     def get_time_context(self) -> str:
@@ -373,6 +393,8 @@ class StreamingInterviewSession:
             "role": self.state.get("role", ""),
             "company": self.state.get("company", ""),
             "endReason": self.state.get("end_reason", ""),
+            "isVertex": self.is_vertex,
+            "ragTokens": self.rag_tokens,
         }
 
         target_url = f"{settings.BACKEND_URL}/analytics/ai-usage"

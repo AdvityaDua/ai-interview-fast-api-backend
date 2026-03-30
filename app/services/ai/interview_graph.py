@@ -637,18 +637,25 @@ the part they left unfinished.
         # ── Type-specific rules ──
         type_rules = _TYPE_RULES.get(state["interview_type"], _TYPE_RULES["technical"])
 
-        # ── JD precedence block ──
+        # ── Precedence block (Standard vs Specialized) ──
+        precedence_block = ""
+        company = state.get("company", "")
         has_jd = state.get("has_jd", False)
-        jd_precedence_block = ""
-        if has_jd:
-            jd_precedence_block = (
-                "\n📋 JD PROVIDED — QUESTION PRIORITY ORDER:\n"
-                "  1. FIRST probe skills listed under 'JD Required Skills' in CANDIDATE CONTEXT — these are what the employer needs.\n"
-                "  2. THEN explore 'Matched Skills' (candidate has them, JD wants them) — validate actual depth.\n"
-                "  3. THEN probe 'Missing Skills' (JD requires, resume lacks) — these are the most important gaps.\n"
-                "  4. LAST explore resume depth on skills NOT in the JD.\n"
-                "  If you're choosing between two topics of equal interest, always pick the JD-required one.\n"
-            )
+
+        if not company or len(company.strip()) < 2:
+            # STANDARD ROUND: Resume-First
+            precedence_block = "\n⭐ STANDARD ROUND RULE (RESUME-FIRST):\n"
+            if has_jd:
+                precedence_block += (
+                    "  - PRIORITIZE the candidate's ACTUAL projects and tech stack from their resume.\n"
+                    "  - Use the JD (Job Description) to filter which resume skills are most relevant to probe deep into.\n"
+                    "  - If JD skills are missing in the resume, you MAY bridge to them, but the main goal is to validate what the candidate SAYS they know first.\n"
+                )
+            else:
+                precedence_block += "  - Focus 100% on the candidate's resume, projects, and stated skills.\n"
+        else:
+            # SPECIALIZED ROUND: JD/RAG-First (handled in company_round_block)
+            pass
 
         # ── Specialized Company Round Overrides ──
         company = state.get("company", "")
@@ -673,7 +680,7 @@ CANDIDATE CONTEXT (resume + JD summary):
 Role: {state.get('role', 'Not specified')} | Company: {state.get('company', 'Not specified')}
 {'═' * 60}
 {company_round_block}
-{jd_precedence_block}
+{precedence_block}
 INTERVIEW PROGRESS — Turn {turn_number + 1}{f' of {max_q}' if max_q > 0 else ''}:
 • Skills covered  : {', '.join(state['skills_covered']) if state['skills_covered'] else 'None yet'}
 • Skills remaining: {', '.join(state['skills_remaining'][:10]) if state['skills_remaining'] else 'All covered — deepen existing topics'}

@@ -110,4 +110,11 @@ class CompanyInterviewSession(StreamingInterviewSession):
         if rag_context:
             self.state["context_summary"] += rag_context
             self.state["has_jd"] = True
-            print(f"[CompanySession] Injected specialized grounding for {company}")
+            
+            # Estimate tokens: 4 characters per token
+            extra_tokens = len(rag_context) // 4
+            self.rag_tokens += extra_tokens
+            # Also count these as initial input tokens
+            self.input_tokens += extra_tokens
+            
+            print(f"[CompanySession] Injected specialized grounding for {company} (~{extra_tokens} RAG tokens)")
