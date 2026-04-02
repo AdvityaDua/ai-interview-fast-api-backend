@@ -29,10 +29,11 @@ class CompanyGeminiClient(GeminiClient):
         
         RULES:
         -   MANDATORY SEQUENCING:
-            1. First 1-2 turns: Professional greeting and introductory questions about their motivation for joining this specific company.
-            2. Remaining Session: Transition into the REAL-WORLD TECHNICAL QUESTIONS provided in the RAG context below. 
+            1. First 1-2 turns: Professional greeting and an opening bridge into the company-specific JD/RAG topic bank.
+            2. Remaining Session: Transition into the REAL-WORLD TECHNICAL QUESTIONS provided in the RAG context below.
         -   RAG PRIORITY: You MUST use the actual questions and case studies found in the 'QUESTION BANK & INTEL (RAG)' section. Do not ask generic technical questions.
-        -   IGNORE RESUME: In this specialized round, do NOT ask about the candidate's projects or past history from their resume. Your goal is purely a standardized knowledge assessment based on the company's hiring bar in the RAG context.
+        -   JD ALWAYS MATTERS: The JD summary in the context is mandatory and should constrain the depth, scope, and difficulty of every question.
+        -   RESUME IS SECONDARY: Do not make the candidate's resume the primary source of topics in this company round. Use it only as a light calibration signal when the RAG bank is exhausted or when you need to confirm seniority.
         -   Be extremely rigorous. Analyze the candidate's technical logic and problem-solving depth.
         -   Ask ONE question at a time.
         
@@ -65,10 +66,11 @@ class CompanyInterviewSession(StreamingInterviewSession):
         self.client = client
         self.graph_engine = InterviewGraph(api_key=client.api_key)
 
-    async def _fetch_company_knowledge(self, company: str) -> str:
+    async def _fetch_company_knowledge(self, company: str, jd_text: str = "") -> str:
         """Find a KnowledgeTopic by name and fetch its vector grounding."""
         if not company or len(company) < 2: return ""
         try:
+            jd_context = jd_text.strip()
             target_url = f"{settings.BACKEND_URL}/knowledge/topics/find-by-name?name={company}&all=true"
             print(f"[CompanySession] Checking for company knowledge: {target_url}")
             async with httpx.AsyncClient() as client:
@@ -78,26 +80,48 @@ class CompanyInterviewSession(StreamingInterviewSession):
                     if topic and "_id" in topic:
                         topic_id = topic["_id"]
                         from .rag_service import rag_service
-                        grounding = await rag_service.get_topic_grounding(topic_id)
+                        grounding = await rag_service.get_topic_grounding(topic_id, company_name=company)
+
+                        intro_block = (
+                            f"\n\n{'=' * 60}\n"
+                            f"🚨 CRITICAL SYSTEM OVERRIDE: SPECIALIZED {company.upper()} INTERVIEW 🚨\n"
+                            f"{'=' * 60}\n"
+                            f"You are now acting as an Elite Senior Principal Interviewer specifically for **{company}**.\n"
+                            f"YOUR MANDATE:\n"
+                            f"1. Use the JD summary already present in the context as the hard constraint for role scope and difficulty.\n"
+                            f"2. Use the RAG section below as the primary topic bank for what this company usually asks.\n"
+                            f"3. Ask around the topics surfaced by RAG, not generic interview filler.\n"
+                            f"4. Treat the candidate's resume as secondary calibration only if the RAG bank is exhausted or ambiguous.\n"
+                        )
+
                         if grounding:
                             print(f"[CompanySession] ✅ Found grounding for '{company}' ({len(grounding)} chars)")
                             return (
-                                f"\n\n{'=' * 60}\n"
-                                f"🚨 CRITICAL SYSTEM OVERRIDE: SPECIALIZED {company.upper()} INTERVIEW 🚨\n"
-                                f"{'=' * 60}\n"
-                                f"You are now acting as an Elite Senior Principal Interviewer specifically for **{company}**.\n"
-                                f"YOUR MANDATE:\n"
-                                f"1. In your opening turn, you MUST greet the candidate and state clearly that you are evaluating them for the '{company}' specific round.\n"
-                                f"2. You MUST prioritize the '{company} QUESTION BANK' provided below over generic questions.\n"
-                                f"3. Elevate your rigor and standards to match top-tier {company} hiring bars.\n"
-                                f"4. If specific {company} questions or case studies are provided below, you MUST ask them, adapting them naturally to the conversation.\n\n"
-                                f"--- {company.upper()} QUESTION BANK & INTEL (RAG) ---\n"
-                                f"{grounding}\n"
-                                f"{'=' * 60}\n"
+                                intro_block
+                                + f"\n--- {company.upper()} QUESTION BANK & INTEL (RAG) ---\n"
+                                + grounding
+                                + f"\n{'=' * 60}\n"
+                            )
+
+                        print(f"[CompanySession] ⚠️ No RAG grounding found for '{company}', falling back to JD-guided company mode")
+                        if jd_context:
+                            return (
+                                intro_block
+                                + f"\n--- {company.upper()} QUESTION BANK & INTEL (RAG) ---\n"
+                                + "No RAG chunks were retrieved for this company. Use the JD summary above to keep the interview focused.\n"
+                                + f"{'=' * 60}\n"
                             )
         except Exception as e:
             print(f"[CompanySession] ⚠️  RAG lookup error for '{company}': {e}")
-        return ""
+        return (
+            f"\n\n{'=' * 60}\n"
+            f"🚨 SPECIALIZED {company.upper()} INTERVIEW MODE 🚨\n"
+            f"{'=' * 60}\n"
+            f"Use the JD summary already present in the context as the primary constraint.\n"
+            f"If RAG content is available, prioritize it for topic selection and question depth.\n"
+            f"Resume content is secondary and should only be used to calibrate seniority or clarify ambiguous topic choice.\n"
+            f"{'=' * 60}\n"
+        )
 
     async def initialize_session(self, *args, **kwargs):
         # First run the normal init to get context summary and resume analysis
@@ -105,7 +129,12 @@ class CompanyInterviewSession(StreamingInterviewSession):
         
         # Now enhance it with company knowledge
         company = kwargs.get("company", args[6] if len(args) > 6 else "")
-        rag_context = await self._fetch_company_knowledge(company)
+        jd_text = kwargs.get("jd_text", args[3] if len(args) > 3 else "")
+
+        if company and not (jd_text or "").strip():
+            raise ValueError("Company-specific interviews require a JD so the RAG bank can be grounded correctly.")
+
+        rag_context = await self._fetch_company_knowledge(company, jd_text=jd_text)
         
         if rag_context:
             self.state["context_summary"] += rag_context

@@ -209,6 +209,16 @@ async def stream_interview_endpoint(
     **Full-Duplex Interview Chat WebSocket**
     """
     user_id = user_payload.get("sub")
+    session: StreamingInterviewSession | None = None
+
+    def _user_message_count(active_session: StreamingInterviewSession | None) -> int:
+        if not active_session:
+            return 0
+        return sum(
+            1 for msg in active_session.history
+            if msg.get("role") in ("user", "candidate")
+        )
+
     await manager.connect(websocket, user_id)
     print(f"[WS] Client {client_id} (User: {user_id}) connected.")
     
@@ -238,6 +248,7 @@ async def stream_interview_endpoint(
             except asyncio.TimeoutError:
                 print(f"[WS] Timeout waiting for init from {user_id}")
                 await manager.send_json({"type": "error", "content": "Initialization timeout. Please try again."}, user_id)
+                await manager.clear_session(user_id)
                 await websocket.close()
                 return
 
@@ -438,10 +449,7 @@ async def stream_interview_endpoint(
                 print(f"[WS] Manual/auto end session for {user_id}")
 
                 # Count how many messages the user actually sent
-                user_msg_count = sum(
-                    1 for msg in session.history
-                    if msg.get("role") in ("user", "candidate")
-                )
+                user_msg_count = _user_message_count(session)
                 print(f"[WS] Session history has {len(session.history)} total messages, {user_msg_count} from user")
 
                 if user_msg_count == 0:
@@ -491,9 +499,18 @@ async def stream_interview_endpoint(
 
     except WebSocketDisconnect:
         print(f"[WS] Client {client_id} disconnected.")
+        # If user exits before answering, treat it as an ended session and purge cache.
+        active_session = session or manager.sessions.get(user_id)
+        if _user_message_count(active_session) == 0:
+            print(f"[WS] Clearing session for {user_id} after early disconnect (no user answers).")
+            await manager.clear_session(user_id)
         manager.disconnect(user_id)
     except Exception as e:
         print(f"[WS] Unexpected error in stream endpoint: {str(e)}")
+        active_session = session or manager.sessions.get(user_id)
+        if _user_message_count(active_session) == 0:
+            print(f"[WS] Clearing session for {user_id} after unexpected early error (no user answers).")
+            await manager.clear_session(user_id)
         manager.disconnect(user_id)
         try:
             await websocket.close()
