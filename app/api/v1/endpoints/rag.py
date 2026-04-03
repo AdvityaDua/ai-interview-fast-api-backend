@@ -14,9 +14,11 @@ async def index_file(
     topic_id: str = Form(...),
     file: UploadFile = File(...)
 ):
-    """Upload and index a single PDF file."""
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+    """Upload and index a PDF or plain-text transcript file."""
+    allowed_extensions = (".pdf", ".txt")
+    filename_lower = (file.filename or "").lower()
+    if not any(filename_lower.endswith(ext) for ext in allowed_extensions):
+        raise HTTPException(status_code=400, detail="Only PDF and TXT files are supported.")
     
     file_id = str(uuid.uuid4())
     temp_path = os.path.join(TEMP_UPLOAD_DIR, f"{file_id}_{file.filename}")

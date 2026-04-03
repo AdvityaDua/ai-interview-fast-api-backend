@@ -22,25 +22,41 @@ class CompanyGeminiClient(GeminiClient):
         time_section = f"TIME MANAGEMENT:\n{time_context}\n" if time_context else ""
 
         prompt = f"""
-        You are an elite senior principal interviewer conducting a rigorous {interview_type} interview for a top-tier tech company.
-        
-        CONTEXT SUMMARY & COMPANY KNOWLEDGE:
+        You are an elite senior principal interviewer conducting a rigorous {interview_type} interview.
+
+        CONTEXT SUMMARY & KNOWLEDGE BASE:
         {context_summary}
-        
+
+        ══════════════════════════════════════════════════════════
+        PRIMARY QUESTION MANDATE — READ CAREFULLY:
+        ══════════════════════════════════════════════════════════
+        The KNOWLEDGE CHUNKS section in the context contains an interview transcript or question
+        bank uploaded by the admin.  Your questions MUST be drawn predominantly from that material.
+
         RULES:
-        -   MANDATORY SEQUENCING:
-            1. First 1-2 turns: Professional greeting and an opening bridge into the company-specific JD/RAG topic bank.
-            2. Remaining Session: Transition into the REAL-WORLD TECHNICAL QUESTIONS provided in the RAG context below.
-        -   RAG PRIORITY: You MUST use the actual questions and case studies found in the 'QUESTION BANK & INTEL (RAG)' section. Do not ask generic technical questions.
-        -   JD ALWAYS MATTERS: The JD summary in the context is mandatory and should constrain the depth, scope, and difficulty of every question.
-        -   RESUME IS SECONDARY: Do not make the candidate's resume the primary source of topics in this company round. Use it only as a light calibration signal when the RAG bank is exhausted or when you need to confirm seniority.
-        -   Be extremely rigorous. Analyze the candidate's technical logic and problem-solving depth.
-        -   Ask ONE question at a time.
-        
+        1. KNOWLEDGE-FIRST: At least 70–80% of your questions must come directly from the topics,
+           questions, or scenarios present in the KNOWLEDGE CHUNKS.  You may lightly rephrase or
+           enhance wording for clarity, but the substance belongs to the transcript.
+        2. ENHANCEMENT ALLOWED: You may add up to 1–2 probing follow-ups per topic (e.g., "Why?",
+           "What trade-offs did you consider?", "Can you show the code?") to deepen the assessment.
+           These do NOT count against the knowledge-first budget.
+        3. CROSS-QUESTION WITH LLM: If the candidate's answer reveals a gap or an interesting
+           tangent that is DIRECTLY RELATED to a topic already covered in the knowledge chunks,
+           you are encouraged to cross-question using your own reasoning to probe depth.
+        4. NO FREE-FORM INVENTION: Do NOT invent new topics outside the knowledge base unless
+           the bank is fully exhausted AND a critical JD requirement has not been covered.
+        5. SEQUENCING:
+           - Turn 1: Professional greeting and one bridging question to set context.
+           - Turns 2+: Work through the knowledge-base question bank systematically.
+        6. Ask ONE question at a time.
+        7. JD constraint (if provided) defines seniority bar and scope — respect it.
+        8. Resume is a calibration signal only; do NOT make it the primary topic source.
+        ══════════════════════════════════════════════════════════
+
         {time_section}
-        
+
         {prompt_history}
-        
+
         Evaluate the latest response and generate the next JSON QuestionEvaluation.
         """
 
@@ -84,42 +100,42 @@ class CompanyInterviewSession(StreamingInterviewSession):
 
                         intro_block = (
                             f"\n\n{'=' * 60}\n"
-                            f"🚨 CRITICAL SYSTEM OVERRIDE: SPECIALIZED {company.upper()} INTERVIEW 🚨\n"
+                            f"KNOWLEDGE-BASE INTERVIEW MODE — {company.upper()}\n"
                             f"{'=' * 60}\n"
-                            f"You are now acting as an Elite Senior Principal Interviewer specifically for **{company}**.\n"
-                            f"YOUR MANDATE:\n"
-                            f"1. Use the JD summary already present in the context as the hard constraint for role scope and difficulty.\n"
-                            f"2. Use the RAG section below as the primary topic bank for what this company usually asks.\n"
-                            f"3. Ask around the topics surfaced by RAG, not generic interview filler.\n"
-                            f"4. Treat the candidate's resume as secondary calibration only if the RAG bank is exhausted or ambiguous.\n"
+                            f"An admin has uploaded an interview knowledge base for this topic.\n"
+                            f"The KNOWLEDGE CHUNKS below are your PRIMARY question source.\n"
+                            f"Draw 70–80%+ of your questions directly from that material.\n"
+                            f"You may enhance questions slightly and cross-question with LLM reasoning,\n"
+                            f"but do NOT invent topics outside the knowledge base unless it is fully exhausted.\n"
+                            f"JD (if provided) constrains scope and seniority bar.\n"
+                            f"Resume is a secondary calibration signal only.\n"
                         )
 
                         if grounding:
                             print(f"[CompanySession] ✅ Found grounding for '{company}' ({len(grounding)} chars)")
                             return (
                                 intro_block
-                                + f"\n--- {company.upper()} QUESTION BANK & INTEL (RAG) ---\n"
+                                + f"\n--- {company.upper()} KNOWLEDGE CHUNKS (PRIMARY QUESTION SOURCE) ---\n"
                                 + grounding
                                 + f"\n{'=' * 60}\n"
                             )
 
-                        print(f"[CompanySession] ⚠️ No RAG grounding found for '{company}', falling back to JD-guided company mode")
+                        print(f"[CompanySession] ⚠️ No RAG grounding found for '{company}', falling back to JD-guided mode")
                         if jd_context:
                             return (
                                 intro_block
-                                + f"\n--- {company.upper()} QUESTION BANK & INTEL (RAG) ---\n"
-                                + "No RAG chunks were retrieved for this company. Use the JD summary above to keep the interview focused.\n"
+                                + f"\n--- KNOWLEDGE CHUNKS ---\n"
+                                + "No knowledge-base chunks were found for this topic. Use the JD summary to focus the interview.\n"
                                 + f"{'=' * 60}\n"
                             )
         except Exception as e:
             print(f"[CompanySession] ⚠️  RAG lookup error for '{company}': {e}")
         return (
             f"\n\n{'=' * 60}\n"
-            f"🚨 SPECIALIZED {company.upper()} INTERVIEW MODE 🚨\n"
+            f"KNOWLEDGE-BASE INTERVIEW MODE — {company.upper()}\n"
             f"{'=' * 60}\n"
-            f"Use the JD summary already present in the context as the primary constraint.\n"
-            f"If RAG content is available, prioritize it for topic selection and question depth.\n"
-            f"Resume content is secondary and should only be used to calibrate seniority or clarify ambiguous topic choice.\n"
+            f"No knowledge-base chunks found. Use the JD summary as the primary constraint.\n"
+            f"Resume content is secondary and should only calibrate seniority.\n"
             f"{'=' * 60}\n"
         )
 

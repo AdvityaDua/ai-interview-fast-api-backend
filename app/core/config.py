@@ -13,41 +13,14 @@ class Settings(BaseSettings):
     GROQ_API_KEY: Optional[str] = None
     REDIS_URL: str = "redis://localhost:6379"
     PISTON_URL: str = "http://localhost:2000"
-    BACKEND_URL: str = "https://api.aiforjob.ai"
+    BACKEND_URL: str = "http://localhost:3000"  # Used for reporting token usage to NestJS analytics
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:3001,http://localhost:5173,http://localhost:5174,https://aiforjob.ai,https://www.aiforjob.ai"
-    
-    # GCP / Vertex AI RAG config for google-cloud-aiplatform
-    GCP_PROJECT_ID: str = "ai-interview-7e471"
-    GCP_LOCATION: str = "us-central1"
-    GCP_RAG_LOCATION: str = "us-west1"
-    GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None
 
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 settings = Settings()
-
-# Explicitly export the credentials path to the OS environment so GCP client libraries can find it
-if settings.GOOGLE_APPLICATION_CREDENTIALS:
-    import os
-    import pathlib
-
-    creds_path = settings.GOOGLE_APPLICATION_CREDENTIALS
-    project_root = pathlib.Path(__file__).parent.parent.parent.resolve()
-    
-    # Resolve relative path if provided (relative to the project root where .env resides)
-    if not os.path.isabs(creds_path):
-        creds_path = str(project_root / creds_path)
-
-    resolved_path = pathlib.Path(creds_path)
-
-    # If the configured path is stale or missing, fall back to a same-named file in the repo root.
-    if not resolved_path.exists():
-        fallback_path = project_root / resolved_path.name
-        if fallback_path.exists():
-            creds_path = str(fallback_path)
-    
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_path
 
 API_DESCRIPTION = """
 🚀 **Ai for job API**

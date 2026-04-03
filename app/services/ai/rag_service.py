@@ -1,134 +1,149 @@
 import os
-import json
 import logging
 import asyncio
-import tempfile
 import time
-import vertexai
-from vertexai.preview import rag
-from google.oauth2 import service_account
-from google.auth.transport import requests as google_auth_requests
-from google.api_core.exceptions import ResourceExhausted
-from pypdf import PdfReader
+import pathlib
+from typing import List, Dict, Any
 
-from app.core.config import settings
+import chromadb
+from chromadb.config import Settings as ChromaSettings
+from pypdf import PdfReader
+from google import genai
+from google.genai import types as genai_types
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+
+from app.core.key_manager import key_manager
 
 logger = logging.getLogger(__name__)
 
+# Persistent ChromaDB directory co-located with the project
+_CHROMA_DIR = str(pathlib.Path(__file__).parent.parent.parent.parent / "chroma_db")
+
+_EMBEDDING_MODEL = "models/gemini-embedding-001"
+
+
+def _is_quota_error(exc: BaseException) -> bool:
+    return "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
+
+
+def _get_genai_client() -> genai.Client:
+    api_key = key_manager.get_gemini_key() or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise RuntimeError("GOOGLE_API_KEY not set — cannot generate embeddings")
+    return genai.Client(api_key=api_key)
+
+
 class RAGService:
+    """
+    Local RAG service backed by ChromaDB + Google gemini-embedding-001.
+    No Vertex AI dependency.  Each knowledge topic maps to one ChromaDB
+    collection named  topic_<topic_id>.
+    """
+
     def __init__(self):
-        # Initialize Vertex AI for RAG with explicit cloud-platform scope.
-        # Some environments can otherwise surface invalid_scope during file uploads.
-        credentials = self._load_scoped_credentials()
-        if credentials is not None:
-            vertexai.init(
-                project=settings.GCP_PROJECT_ID,
-                location=settings.GCP_RAG_LOCATION,
-                credentials=credentials,
-            )
-        else:
-            vertexai.init(project=settings.GCP_PROJECT_ID, location=settings.GCP_RAG_LOCATION)
-
-        # Small in-process caches to avoid repeated retrieval calls that burn embedding quota.
-        self._corpus_cache = {}
-        self._grounding_cache = {}
-        self._grounding_locks = {}
+        os.makedirs(_CHROMA_DIR, exist_ok=True)
+        self._chroma = chromadb.PersistentClient(
+            path=_CHROMA_DIR,
+            settings=ChromaSettings(anonymized_telemetry=False),
+        )
+        # In-process caches
+        self._grounding_cache: Dict[str, tuple] = {}
+        self._grounding_locks: Dict[str, asyncio.Lock] = {}
         self._grounding_ttl_seconds = int(os.getenv("RAG_GROUNDING_CACHE_TTL_SECONDS", "1800"))
-        self._grounding_max_queries = int(os.getenv("RAG_GROUNDING_MAX_QUERIES", "1"))
-        self._grounding_top_k = int(os.getenv("RAG_GROUNDING_TOP_K", "8"))
+        self._grounding_top_k = int(os.getenv("RAG_GROUNDING_TOP_K", "5"))  # default 5 chunks max
+        self._grounding_chunk_cap = int(os.getenv("RAG_GROUNDING_CHUNK_CAP", "600"))  # max chars per chunk in prompt
 
-    def _load_scoped_credentials(self):
-        """Load service-account credentials with explicit cloud-platform scope."""
-        creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or settings.GOOGLE_APPLICATION_CREDENTIALS
-        if not creds_path:
-            logger.warning("GOOGLE_APPLICATION_CREDENTIALS not set. Falling back to default ADC resolution.")
-            return None
+    # ─────────────────────────────────────────────────────── embedding ──────
 
+    def _embed_texts(self, texts: List[str]) -> List[List[float]]:
+        """Embed document chunks using google-genai gemini-embedding-001 (single batched API call)."""
+        return self._embed_with_retry(texts)
+
+    @retry(
+        retry=retry_if_exception(_is_quota_error),
+        wait=wait_exponential(multiplier=2, min=4, max=60),
+        stop=stop_after_attempt(4),
+        reraise=True,
+    )
+    def _embed_with_retry(self, texts: List[str]) -> List[List[float]]:
+        client = _get_genai_client()
+        result = client.models.embed_content(model=_EMBEDDING_MODEL, contents=texts)
+        return [e.values for e in result.embeddings]
+
+    def _embed_query(self, query: str) -> List[List[float]]:
+        """Embed a single query string using google-genai gemini-embedding-001."""
+        return self._embed_query_with_retry(query)
+
+    @retry(
+        retry=retry_if_exception(_is_quota_error),
+        wait=wait_exponential(multiplier=2, min=4, max=60),
+        stop=stop_after_attempt(4),
+        reraise=True,
+    )
+    def _embed_query_with_retry(self, query: str) -> List[List[float]]:
+        client = _get_genai_client()
+        result = client.models.embed_content(model=_EMBEDDING_MODEL, contents=query)
+        return [result.embeddings[0].values]
+
+    # ─────────────────────────────────────────────────────── collection ─────
+
+    def _collection(self, topic_id: str):
+        """Get-or-create a ChromaDB collection for a topic."""
+        name = f"topic_{topic_id}"
+        return self._chroma.get_or_create_collection(
+            name=name,
+            metadata={"hnsw:space": "cosine"},
+        )
+
+    # ─────────────────────────────────────────────────────── indexing ───────
+
+    async def index_pdf(self, file_path: str, topic_id: str) -> int:
+        """
+        Index a PDF **or** plain-text file into ChromaDB.
+        Returns the number of chunks stored.
+        """
         try:
-            return service_account.Credentials.from_service_account_file(
-                creds_path,
-                scopes=["https://www.googleapis.com/auth/cloud-platform"],
-            )
-        except Exception as e:
-            logger.warning(f"Failed to load scoped service-account credentials from {creds_path}: {e}")
-            return None
+            ext = pathlib.Path(file_path).suffix.lower()
+            if ext == ".txt":
+                text = await asyncio.to_thread(self._read_text_file, file_path)
+            else:
+                text = await asyncio.to_thread(self._extract_pdf_text, file_path)
 
-    async def _get_corpus_by_topic(self, topic_id: str):
-        """Find an existing Corpus by its display name (topic_id)."""
-        try:
-            cache_key = f"topic_{topic_id}"
-            cached = self._corpus_cache.get(cache_key)
-            if cached is not None:
-                return cached
-
-            corpora = await asyncio.to_thread(rag.list_corpora)
-            for c in corpora:
-                if c.display_name == f"topic_{topic_id}":
-                    self._corpus_cache[cache_key] = c
-                    return c
-        except Exception as e:
-            logger.warning(f"Error listing corpora: {e}")
-        return None
-
-    async def _get_or_create_corpus(self, topic_id: str):
-        """Find the corpus, or create it if it doesn't exist."""
-        c = await self._get_corpus_by_topic(topic_id)
-        if c:
-            return c
-        logger.info(f"Creating new Vertex AI RAG Corpus for topic_{topic_id}")
-        created = await asyncio.to_thread(rag.create_corpus, display_name=f"topic_{topic_id}")
-        self._corpus_cache[f"topic_{topic_id}"] = created
-        return created
-
-    async def index_pdf(self, file_path: str, topic_id: str):
-        """Upload a PDF file to the Vertex AI RAG Corpus."""
-        try:
-            logger.info(f"Indexing PDF into Vertex AI RAG: {file_path} for topic: {topic_id}")
-            corpus = await self._get_or_create_corpus(topic_id)
-
-            # Prefer explicit text chunk uploads for predictable retrieval granularity.
-            text = await asyncio.to_thread(self._extract_pdf_text, file_path)
             chunks = self._chunk_text(text, chunk_chars=1400, overlap_chars=220)
-
             if not chunks:
-                logger.warning("No extractable text found in PDF. Falling back to raw PDF upload.")
-                rag_file = await asyncio.to_thread(
-                    self._upload_file_scoped,
-                    corpus_name=corpus.name,
-                    file_path=file_path,
-                    display_name=os.path.basename(file_path),
-                )
-                logger.info(f"Successfully uploaded {file_path} as Vertex RAG File: {rag_file.name}")
-                return 1
+                logger.warning("No extractable text found in file: %s", file_path)
+                return 0
 
-            base_name = os.path.splitext(os.path.basename(file_path))[0]
-            uploaded_count = 0
-            for idx, chunk in enumerate(chunks, start=1):
-                with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", encoding="utf-8", delete=False) as temp_chunk:
-                    temp_chunk.write(chunk)
-                    temp_path = temp_chunk.name
+            logger.info("Embedding %d chunks for topic %s …", len(chunks), topic_id)
+            embeddings = await asyncio.to_thread(self._embed_texts, chunks)
 
-                try:
-                    display_name = f"{base_name}_chunk_{idx:03d}.txt"
-                    await asyncio.to_thread(
-                        self._upload_file_scoped,
-                        corpus_name=corpus.name,
-                        file_path=temp_path,
-                        display_name=display_name,
-                        mime_type="text/plain",
-                    )
-                    uploaded_count += 1
-                finally:
-                    try:
-                        os.remove(temp_path)
-                    except OSError:
-                        pass
+            collection = self._collection(topic_id)
+            base_name = pathlib.Path(file_path).stem
 
-            logger.info(f"Successfully uploaded {uploaded_count} text chunks for {file_path}")
-            return uploaded_count
+            ids = [f"{base_name}_c{i:04d}" for i in range(len(chunks))]
+            metadatas = [{"source": os.path.basename(file_path), "chunk": i} for i in range(len(chunks))]
+
+            # ChromaDB upsert handles re-indexing the same file idempotently
+            collection.upsert(
+                ids=ids,
+                embeddings=embeddings,
+                documents=chunks,
+                metadatas=metadatas,
+            )
+
+            logger.info("Stored %d chunks for topic %s", len(chunks), topic_id)
+            return len(chunks)
+
         except Exception as e:
-            logger.error(f"Error indexing PDF {file_path} to Vertex AI: {str(e)}")
-            raise e
+            logger.error("Error indexing file %s for topic %s: %s", file_path, topic_id, e)
+            raise
+
+    # ─────────────────────────────────────────────────────── text helpers ───
+
+    def _read_text_file(self, file_path: str) -> str:
+        """Read a plain-text transcript file."""
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read()
 
     def _extract_pdf_text(self, file_path: str) -> str:
         """Extract textual content from PDF pages with page headers."""
@@ -141,14 +156,14 @@ class RAGService:
             sections.append(f"[PAGE {idx}]\n{page_text}")
         return "\n\n".join(sections)
 
-    def _chunk_text(self, text: str, chunk_chars: int = 1400, overlap_chars: int = 220):
+    def _chunk_text(self, text: str, chunk_chars: int = 1400, overlap_chars: int = 220) -> List[str]:
         """Split text into overlapping chunks while preserving paragraph boundaries."""
         normalized = "\n".join([line.rstrip() for line in text.splitlines()]).strip()
         if not normalized:
             return []
 
         paragraphs = [p.strip() for p in normalized.split("\n\n") if p.strip()]
-        chunks = []
+        chunks: List[str] = []
         current = ""
 
         for para in paragraphs:
@@ -178,8 +193,8 @@ class RAGService:
         if current:
             chunks.append(current)
 
-        deduped = []
-        seen = set()
+        deduped: List[str] = []
+        seen: set = set()
         for chunk in chunks:
             key = chunk.strip()
             if key and key not in seen:
@@ -187,146 +202,107 @@ class RAGService:
                 deduped.append(key)
         return deduped
 
-    def _upload_file_scoped(self, corpus_name: str, file_path: str, display_name: str, mime_type: str = "application/pdf"):
-        """Upload RagFile with explicit cloud-platform scoped credentials."""
-        creds = self._load_scoped_credentials()
-        if creds is None:
-            raise RuntimeError("Scoped Google credentials are required for RAG file upload.")
+    # ─────────────────────────────────────────────────────── querying ───────
 
-        location = settings.GCP_RAG_LOCATION
-        upload_request_uri = f"https://{location}-aiplatform.googleapis.com/upload/v1beta1/{corpus_name}/ragFiles:upload"
-        headers = {"X-Goog-Upload-Protocol": "multipart"}
-        metadata = {"rag_file": {"display_name": display_name}}
-
-        authorized_session = google_auth_requests.AuthorizedSession(credentials=creds)
-        with open(file_path, "rb") as file_handle:
-            files = {
-                "metadata": (None, json.dumps(metadata), "application/json"),
-                "file": (os.path.basename(file_path), file_handle, mime_type),
-            }
-            response = authorized_session.post(
-                url=upload_request_uri,
-                files=files,
-                headers=headers,
-            )
-
-        if response.status_code == 404:
-            raise ValueError(f"RagCorpus '{corpus_name}' is not found.")
-
-        payload = response.json()
-        if payload.get("error"):
-            raise RuntimeError(f"Failed in indexing the RagFile due to: {payload['error']}")
-
-        class UploadedRagFile:
-            def __init__(self, name: str):
-                self.name = name
-
-        return UploadedRagFile(name=payload.get("name", "unknown"))
-
-    async def query_topic(self, topic_id: str, query: str, k: int = 5):
-        """Search for relevant chunks via Vertex AI RAG."""
+    async def query_topic(self, topic_id: str, query: str, k: int = 5) -> List[Dict[str, Any]]:
+        """Retrieve the top-k most relevant chunks for a query from ChromaDB."""
         try:
-            corpus = await self._get_corpus_by_topic(topic_id)
-            if not corpus:
-                logger.warning(f"No Vertex AI Corpus found for topic_{topic_id}")
+            try:
+                collection = self._chroma.get_collection(f"topic_{topic_id}")
+            except Exception:
+                logger.warning("No ChromaDB collection found for topic_%s", topic_id)
                 return []
-            
-            response = await asyncio.to_thread(
-                rag.retrieval_query,
-                rag_resources=[rag.RagResource(rag_corpus=corpus.name)],
-                text=query,
-                similarity_top_k=k
+
+            if collection.count() == 0:
+                return []
+
+            query_embedding = await asyncio.to_thread(self._embed_query, query)
+            results = await asyncio.to_thread(
+                collection.query,
+                query_embeddings=query_embedding,
+                n_results=min(k, collection.count()),
+                include=["documents", "metadatas", "distances"],
             )
-            
-            results = []
-            if getattr(response, 'contexts', None) and getattr(response.contexts, 'contexts', None):
-                for context in response.contexts.contexts:
-                    results.append({
-                        "content": context.text,
-                        "metadata": {"source_document": getattr(context, 'source_uri', "Vertex RAG")}
-                    })
-            return results
-        except ResourceExhausted as e:
-            logger.warning(
-                f"Vertex embedding quota exhausted while querying topic {topic_id}. "
-                f"query='{query[:80]}', top_k={k}. Error: {e}"
-            )
-            return []
+
+            output = []
+            docs = results.get("documents", [[]])[0]
+            metas = results.get("metadatas", [[]])[0]
+            for doc, meta in zip(docs, metas):
+                output.append({"content": doc, "metadata": meta})
+            return output
         except Exception as e:
-            logger.error(f"Error querying Vertex AI topic {topic_id}: {str(e)}")
+            logger.error("Error querying ChromaDB for topic %s: %s", topic_id, e)
             return []
 
-    async def delete_topic_collection(self, topic_id: str):
-        """Delete an entire Corpus from Vertex AI RAG."""
+    async def delete_topic_collection(self, topic_id: str) -> bool:
+        """Delete a topic's entire ChromaDB collection."""
         try:
-            corpus = await self._get_corpus_by_topic(topic_id)
-            if corpus:
-                logger.info(f"Deleting Vertex AI RAG Corpus: {corpus.name}")
-                await asyncio.to_thread(rag.delete_corpus, name=corpus.name)
+            self._chroma.delete_collection(f"topic_{topic_id}")
+            # Invalidate grounding cache for this topic
+            keys_to_drop = [k for k in self._grounding_cache if k.startswith(f"{topic_id}:")]
+            for k in keys_to_drop:
+                del self._grounding_cache[k]
+            logger.info("Deleted ChromaDB collection for topic_%s", topic_id)
             return True
         except Exception as e:
-            logger.error(f"Error deleting Vertex AI Corpus for topic {topic_id}: {str(e)}")
+            logger.error("Error deleting ChromaDB collection for topic %s: %s", topic_id, e)
             return False
 
     async def get_topic_grounding(self, topic_id: str, limit: int = 20, company_name: str = "") -> str:
-        """Fetch representative chunks for AI grounding via semantic search."""
-        try:
-            normalized_company = company_name.strip()
-            cache_key = f"{topic_id}:{normalized_company.lower()}:{limit}"
-            now = time.time()
+        """
+        Fetch representative chunks from the knowledge base for LLM grounding.
+
+        The returned string is injected verbatim into the interview system prompt so
+        the LLM uses the uploaded transcript/document as its primary question source.
+        """
+        normalized_company = company_name.strip()
+        cache_key = f"{topic_id}:{normalized_company.lower()}:{limit}"
+        now = time.time()
+
+        cached = self._grounding_cache.get(cache_key)
+        if cached and cached[0] > now:
+            return cached[1]
+
+        lock = self._grounding_locks.setdefault(cache_key, asyncio.Lock())
+        async with lock:
             cached = self._grounding_cache.get(cache_key)
+            now = time.time()
             if cached and cached[0] > now:
                 return cached[1]
 
-            lock = self._grounding_locks.setdefault(cache_key, asyncio.Lock())
-            async with lock:
-                cached = self._grounding_cache.get(cache_key)
-                now = time.time()
-                if cached and cached[0] > now:
-                    return cached[1]
+            effective_limit = max(1, min(limit, self._grounding_top_k))
 
-                # Keep retrieval queries minimal because each call can consume embedding quota.
-                queries = []
-                if normalized_company:
-                    queries.append(
-                        f"{normalized_company} interview topics, coding rounds, system design and behavioral expectations"
-                    )
+            # Single focused query — one embedding API call per session.
+            # If a company name is given, that query already covers the topic well.
+            primary_query = (
+                f"{normalized_company} interview questions and key topics"
+                if normalized_company
+                else "interview questions topics and key concepts"
+            )
 
-                queries.append("technical interview question bank and role requirements")
+            seen_contents: set = set()
+            results: List[Dict[str, Any]] = []
 
-                max_queries = max(1, self._grounding_max_queries)
-                effective_limit = max(1, min(limit, self._grounding_top_k))
+            batch = await self.query_topic(topic_id, query=primary_query, k=effective_limit)
+            for item in batch:
+                content = (item.get("content") or "").strip()
+                if content and content not in seen_contents:
+                    seen_contents.add(content)
+                    results.append(item)
 
-                results = []
-                seen_contents = set()
-                for query_text in queries[:max_queries]:
-                    query_results = await self.query_topic(topic_id, query=query_text, k=effective_limit)
-                    if not query_results:
-                        continue
+            if not results:
+                logger.warning("No grounding documents found for topic_%s", topic_id)
+                self._grounding_cache[cache_key] = (time.time() + self._grounding_ttl_seconds, "")
+                return ""
 
-                    for item in query_results:
-                        content = (item.get("content") or "").strip()
-                        if not content or content in seen_contents:
-                            continue
-                        seen_contents.add(content)
-                        results.append(item)
-                        if len(results) >= effective_limit:
-                            break
+            grounding_text = "\n\n".join(
+                f"--- KNOWLEDGE CHUNK {i+1} ---\n{r['content'][:self._grounding_chunk_cap]}"
+                for i, r in enumerate(results)
+            )
+            self._grounding_cache[cache_key] = (time.time() + self._grounding_ttl_seconds, grounding_text)
+            return grounding_text
 
-                    if len(results) >= effective_limit:
-                        break
-
-                if not results:
-                    logger.warning(f"No grounding documents found for topic_{topic_id}")
-                    self._grounding_cache[cache_key] = (time.time() + self._grounding_ttl_seconds, "")
-                    return ""
-
-                grounding_text = "\n\n".join([f"--- KNOWLEDGE CHUNK ---\n{res['content']}" for res in results])
-                self._grounding_cache[cache_key] = (time.time() + self._grounding_ttl_seconds, grounding_text)
-                return grounding_text
-        except Exception as e:
-            logger.error(f"Error getting grounding for topic {topic_id}: {str(e)}")
-            return ""
 
 # Singleton instance
 rag_service = RAGService()
+
