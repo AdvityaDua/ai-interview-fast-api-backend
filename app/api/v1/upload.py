@@ -298,3 +298,17 @@ async def upload_and_improve_cv(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Improvement failed: {str(e)}")
+
+
+@router.post("/extract-text")
+async def extract_text_endpoint(
+    file: UploadFile = File(...)
+):
+    """Extract plain text from an uploaded document (PDF, DOCX, TXT, etc.) — used for JD upload."""
+    try:
+        text = save_and_extract(file, max_pages=20)
+        return {"text": text.strip(), "filename": file.filename}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Text extraction failed: {str(e)}")
