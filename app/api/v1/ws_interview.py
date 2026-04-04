@@ -336,7 +336,7 @@ async def stream_interview_endpoint(
                     print(f"[WS] ================================================")
                     print(f"[WS] Initializing context for {user_id} ({interview_type} round)...")
                     
-                    # Choose interviewer type: If company is specified, use the specialized CompanyInterviewer (RAG-enabled)
+                    # Choose interviewer type: If company is specified, use the specialized CompanyInterviewer (JD/company-context driven)
                     company = init_payload.get("company", "")
                     if company and len(company.strip()) > 1:
                         print(f"[WS] 🚀 Specialized Company Interviewer chosen for '{company}'")

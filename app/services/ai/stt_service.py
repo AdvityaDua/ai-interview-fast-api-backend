@@ -3,6 +3,7 @@ import json
 import time
 import wave
 import asyncio
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 import websockets
@@ -14,6 +15,7 @@ AUDIO_DIR = Path(__file__).parent.parent / "audio_recordings"
 AUDIO_DIR.mkdir(exist_ok=True)
 
 DEEPGRAM_WS_URL = "wss://api.deepgram.com/v1/listen"
+logger = logging.getLogger(__name__)
 
 
 class DeepgramSTTService:
@@ -63,6 +65,7 @@ class DeepgramSTTService:
 
         # Open WebSocket to Deepgram
         ws = await websockets.connect(url, additional_headers=headers)
+        logger.info("[STT] Deepgram stream connected")
 
         stream = DeepgramStream(ws, on_partial, on_final)
         
@@ -114,10 +117,10 @@ class DeepgramStream:
 
 
 
-        except websockets.exceptions.ConnectionClosed:
-            pass
+        except websockets.exceptions.ConnectionClosed as e:
+            logger.warning(f"[STT] Deepgram websocket closed: code={e.code}, reason={e.reason}")
         except Exception as e:
-            pass
+            logger.exception(f"[STT] listen_loop failed: {e}")
 
     async def send(self, audio_bytes: bytes):
         """Send raw audio bytes to Deepgram."""
@@ -127,7 +130,7 @@ class DeepgramStream:
         try:
             await self.ws.send(audio_bytes)
         except Exception as e:
-            pass
+            logger.warning(f"[STT] Failed to send audio chunk: {e}")
 
     async def finish(self):
         """Close the Deepgram connection gracefully."""
@@ -142,7 +145,7 @@ class DeepgramStream:
             await asyncio.sleep(0.5)
             await self.ws.close()
         except Exception as e:
-            pass
+            logger.warning(f"[STT] Error during stream finish: {e}")
         
         # Cancel listen task
         if self._listen_task and not self._listen_task.done():

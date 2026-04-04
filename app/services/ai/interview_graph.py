@@ -654,22 +654,22 @@ the part they left unfinished.
             else:
                 precedence_block += "  - Focus 100% on the candidate's resume, projects, and stated skills.\n"
         else:
-            # SPECIALIZED ROUND: JD/RAG-First (handled in company_round_block)
+            # SPECIALIZED ROUND: JD/company-first (handled in company_round_block)
             pass
 
-        # ── Specialized Company Round Overrides ──
+          # ── Specialized Company Round Overrides ──
         company = state.get("company", "")
         company_round_block = ""
         if company and len(company.strip()) > 1:
             company_round_block = f"""
 🚨 SPECIALIZED {company.upper()} ROUND RULES (KNOWLEDGE ASSESSMENT):
-1. RAG & JD FOCUS: Your PRIMARY source for technical evaluation is the Job Description and the 'QUESTION BANK & INTEL (RAG)' below.
-2. RESUME IS SECONDARY: Do NOT make the candidate's resume, projects, or prior companies the main source of questions. Use them only for light seniority calibration when RAG/JD topics are exhausted or ambiguous.
-3. OPENING TURN (MANDATORY): Start by referencing one JD requirement or one RAG-derived topic and ask an introductory knowledge-based question related to that topic.
-4. CODING CHALLENGES: Following the intro, transition into the technical/coding tasks from the RAG bank.
+1. JD & COMPANY CONTEXT FOCUS: Your PRIMARY source for technical evaluation is the Job Description and company-specific expectations implied by the round type.
+2. RESUME IS SECONDARY: Do NOT make the candidate's resume, projects, or prior companies the main source of questions. Use them only for light seniority calibration when JD topics are exhausted.
+3. OPENING TURN (MANDATORY): Start by referencing one JD requirement and ask an introductory knowledge-based question related to that topic.
+4. CODING CHALLENGES: Following the intro, transition into technical/coding tasks aligned to the declared round type.
 5. INTERVIEW FLOW:
    - Turn 0: Professional greeting + Opening bridge (JD requirement -> 'What is your understanding of...').
-   - Turn 1+: Deep technical drills and coding assessments from the RAG context.
+    - Turn 1+: Deep technical drills and coding assessments derived from JD + company context.
 6. These rules override the default resume-first guidance above for specialized company rounds.
 """
 
@@ -711,8 +711,8 @@ INTERVIEW TYPE RULES:
 INSTRUCTIONS:
 1. Opening turn (turn 0): greet candidate BY NAME from CANDIDATE CONTEXT (if available); ask a single warm-up question about their PRIMARY TECHNOLOGY (or motivation if this is a Company Round).
 2. All other turns: apply the routing strategy above FIRST, then pick the best next question.
-3. ALWAYS anchor questions to the candidate's stated experience and stack, UNLESS this is a Specialized Company Round, in which case use JD + RAG as the primary source and keep resume usage secondary.
-4. If a JD or Company RAG is present (see 🚨 SPECIALIZED block above): prioritise those technical questions and gaps over generic resume exploration.
+3. ALWAYS anchor questions to the candidate's stated experience and stack, UNLESS this is a Specialized Company Round, in which case use JD + company context as the primary source and keep resume usage secondary.
+4. If JD is present (see 🚨 SPECIALIZED block above): prioritise those technical questions and gaps over generic resume exploration.
 5. question = the exact words you say to the candidate. Natural, conversational, interviewer tone.
 6. QUESTION DEPTH — STRICTLY ENFORCED:
    - Never ask a question a first-year student could answer trivially if the candidate has real experience.
