@@ -9,6 +9,7 @@ from app.api.v1.tts import router as tts_router
 from app.api.v1.semantic_match import router as semantic_match_router
 from app.api.v1.docs import router as docs_router
 from app.api.v1.endpoints.rag import router as rag_router
+from app.api.v1.endpoints.question_bank import router as question_bank_router
 
 api_router = APIRouter()
 api_router.include_router(test_router, tags=["Test"])
@@ -21,3 +22,4 @@ api_router.include_router(tts_router, tags=["TTS"])
 api_router.include_router(semantic_match_router, tags=["Matching"])
 api_router.include_router(docs_router, prefix="/docs", tags=["Documentation"])
 api_router.include_router(rag_router, prefix="/rag", tags=["RAG"])
+api_router.include_router(question_bank_router, prefix="/question-bank", tags=["Question Bank"])

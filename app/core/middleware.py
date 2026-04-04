@@ -21,7 +21,7 @@ class AuthMiddleware:
         path = scope.get("path", "")
 
         # 3. Bypass unprotected paths (including OPTIONS preflight)
-        unprotected_paths = ["/docs", "/openapi.json", "/redoc", "/api/v1/health", "/api/v1/interview/", "/api/v1/code/", "/api/v1/match", "/api/v1/docs/seed", "/api/v1/rag/"]
+        unprotected_paths = ["/docs", "/openapi.json", "/redoc", "/api/v1/health", "/api/v1/interview/", "/api/v1/code/", "/api/v1/match", "/api/v1/docs/seed", "/api/v1/rag/", "/api/v1/question-bank/"]
         if method == "OPTIONS" or any(path.startswith(p) for p in unprotected_paths):
             await self.app(scope, receive, send)
             return
