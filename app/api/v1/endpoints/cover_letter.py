@@ -146,20 +146,27 @@ async def generate_cover_letter(
         from app.core.config import settings
 
         token = request.headers.get("authorization", "")
-        async with httpx.AsyncClient(timeout=5.0) as http_client:
+        async with httpx.AsyncClient(timeout=8.0) as http_client:
             limit_resp = await http_client.post(
                 f"{settings.BACKEND_URL}/cover-letters/check-and-use",
                 headers={"Authorization": token},
             )
         if limit_resp.status_code == 400:
+            # Explicit limit-exceeded response from NestJS — block the request
             detail = limit_resp.json().get("message", "Cover letter limit reached")
             raise HTTPException(status_code=429, detail=detail)
-        elif limit_resp.status_code != 201 and limit_resp.status_code != 200:
-            raise HTTPException(status_code=429, detail="Unable to verify cover letter limit. Try again.")
+        elif limit_resp.status_code not in (200, 201):
+            # Any other non-success status (401, 403, 500, etc.) is treated as a
+            # transient / configuration issue — fail-open so users aren't blocked
+            import logging
+            logging.getLogger(__name__).warning(
+                f"Cover letter limit check returned unexpected status "
+                f"{limit_resp.status_code} — proceeding (fail-open)"
+            )
     except HTTPException:
         raise
     except Exception as e:
-        # Log but do not block on limit check failure (fail-open, avoids service outage)
+        # Network error / timeout — fail-open, avoids service outage
         import logging
         logging.getLogger(__name__).warning(f"Cover letter limit check failed: {e}")
     # ─────────────────────────────────────────────────────────────────────────
