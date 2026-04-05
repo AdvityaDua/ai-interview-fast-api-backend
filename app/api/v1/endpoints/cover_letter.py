@@ -141,23 +141,28 @@ async def generate_cover_letter(
         raise HTTPException(status_code=503, detail="AI service not configured")
 
     # ── Enforce cover letter limit via NestJS backend ─────────────────────────
+    # Use the internal endpoint (no JWT re-validation required) — pass the
+    # user ID that this service already verified from the JWT. This matches
+    # the same pattern used by analytics/ai-usage (no @UseGuards on NestJS side).
     try:
         import httpx
         from app.core.config import settings
 
-        token = request.headers.get("authorization", "")
+        user_id = (user or {}).get("sub") or (user or {}).get("id") or (user or {}).get("userId")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Could not determine user identity")
+
         async with httpx.AsyncClient(timeout=8.0) as http_client:
             limit_resp = await http_client.post(
-                f"{settings.BACKEND_URL}/cover-letters/check-and-use",
-                headers={"Authorization": token},
+                f"{settings.BACKEND_URL}/cover-letters/check-and-use-internal",
+                json={"userId": str(user_id)},
             )
         if limit_resp.status_code == 400:
             # Explicit limit-exceeded response from NestJS — block the request
             detail = limit_resp.json().get("message", "Cover letter limit reached")
             raise HTTPException(status_code=429, detail=detail)
         elif limit_resp.status_code not in (200, 201):
-            # Any other non-success status (401, 403, 500, etc.) is treated as a
-            # transient / configuration issue — fail-open so users aren't blocked
+            # Any other unexpected status — fail-open so infra issues don't block users
             import logging
             logging.getLogger(__name__).warning(
                 f"Cover letter limit check returned unexpected status "
