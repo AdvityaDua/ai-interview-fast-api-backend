@@ -1,6 +1,7 @@
 # Product Requirements Document: RAG Implementation
 
-## Overview
+
+# Overview
 
 This backend now supports a specialized Retrieval-Augmented Generation flow for company-specific interview rounds. The RAG implementation is not a generic vector-search layer inside the interview graph; it is a Vertex AI managed corpus pipeline that indexes topic documents, retrieves relevant grounding chunks, and injects them into the interview prompt as company intelligence.
 
