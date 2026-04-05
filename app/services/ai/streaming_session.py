@@ -1,10 +1,12 @@
 import time
 import asyncio
 import httpx
+import random
 from typing import List, Dict, Any, Optional
 from app.core.config import settings
 from .gemini_client import GeminiClient
-from .interview_graph import InterviewGraph, InterviewState, _max_questions_for_duration, _max_questions_per_topic, _max_confusion_retries_for_duration
+from .langgraph_agent import InterviewState
+from .token_optimized_agent import InterviewGraph, _max_confusion_retries_for_duration, _max_questions_for_duration, _max_questions_per_topic
 from .schemas import Action
 
 class StreamingInterviewSession:
@@ -43,6 +45,10 @@ class StreamingInterviewSession:
             "output_tokens": 0,
             "rag_tokens": 0,
             "is_vertex": False,
+            "opening_line": "",
+            "closing_line": "",
+            "source_question_candidates": [],
+            "question_source_mode": "",
         }
         self.start_time: float = 0.0
         self.duration_limit: int = 0
@@ -248,6 +254,51 @@ class StreamingInterviewSession:
         )
         print(f"[Session] is_developer_role={is_developer} for role={role!r} type={interview_type!r}")
 
+        plan_opening_line = ""
+        plan_closing_line = ""
+        plan_candidates: list[dict[str, Any]] = []
+        question_source_mode = ""
+        must_ask_coding_question = interview_type in ("technical", "problem")
+
+        try:
+            from app.services.ai.source_interview_planner import source_interview_planner
+
+            def _build_plan_blocking() -> dict[str, Any]:
+                # build_plan performs synchronous network work internally (requests); run it off-loop.
+                return asyncio.run(
+                    source_interview_planner.build_plan(
+                        resume_text=resume_text,
+                        jd_text=jd_text,
+                        company_name=company,
+                        role=role,
+                        interview_type=interview_type,
+                        duration_minutes=duration,
+                    )
+                )
+
+            plan = await asyncio.wait_for(asyncio.to_thread(_build_plan_blocking), timeout=8.0)
+            plan_opening_line = str(plan.get("opening_line", "") or "")
+            plan_closing_line = str(plan.get("closing_line", "") or "")
+            plan_candidates = list(plan.get("question_candidates", []) or [])
+            if len(plan_candidates) > 1:
+                random.SystemRandom().shuffle(plan_candidates)
+            question_source_mode = str(plan.get("question_source_mode", "") or "")
+            must_ask_coding_question = bool(plan.get("needs_coding_question", must_ask_coding_question))
+
+            planner_topics = [str(topic) for topic in (plan.get("topics", []) or []) if str(topic).strip()]
+            if planner_topics:
+                initial_skills = list(dict.fromkeys([*planner_topics, *initial_skills]))[:12]
+
+            print(f"[Session] source planner ready: candidates={len(plan_candidates)} mode={question_source_mode or 'n/a'}")
+        except asyncio.TimeoutError:
+            print("[Session] source planner timed out after 8s, continuing with default flow")
+        except Exception as exc:
+            print(f"[Session] source planner unavailable, continuing with default flow: {exc}")
+
+        # ── Generate greeting and closing lines ──────────────────────────────────
+        opening_line = plan_opening_line or f"Hi {candidate_name or 'there'}, thanks for joining us today. Let's get started with an interview focused on {role or interview_type} and the role fit for {company or 'your target company'}."
+        closing_line = plan_closing_line or "Thank you so much for interviewing with us today. We really appreciate your time, and we'll share the next steps soon."
+
         self.state.update({
             "user_id": user_id,
             "session_id": session_id,
@@ -283,6 +334,12 @@ class StreamingInterviewSession:
             "topic_question_counts": {},
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "opening_line": opening_line,
+            "closing_line": closing_line,
+            "source_question_candidates": plan_candidates,
+            "question_source_mode": question_source_mode,
+            "must_ask_coding_question": must_ask_coding_question,
+            "needs_coding_question": must_ask_coding_question,
         })
 
     def get_time_context(self) -> str:
@@ -336,8 +393,12 @@ class StreamingInterviewSession:
         self.state = updated_state
         
         evaluation = self.state["current_evaluation"]
-        question_text = evaluation.next_step.question
-        is_coding = evaluation.next_step.is_coding_question
+        next_step = evaluation.get("next_step", {}) if isinstance(evaluation, dict) else getattr(evaluation, "next_step", {})
+        # Prefer canonical state question because run_turn may prepend greeting/closing there.
+        question_text = str(self.state.get("current_question", "") or "").strip()
+        if not question_text:
+            question_text = next_step.get("question", "") if isinstance(next_step, dict) else getattr(next_step, "question", "")
+        is_coding = next_step.get("is_coding_question", False) if isinstance(next_step, dict) else getattr(next_step, "is_coding_question", False)
 
         if self.state["ended"]:
             if len(question_text) < 5:
@@ -353,8 +414,10 @@ class StreamingInterviewSession:
             yield {"type": "text", "content": question_text[i:i+chunk_size]}
             await asyncio.sleep(0.01)
 
-        # Update history with the model's question
-        self.state["history"].append({"role": "model", "content": question_text})
+        # run_turn already records the model question in history; avoid duplicate entries.
+        history = self.state.get("history", [])
+        if not history or history[-1].get("role") != "model" or history[-1].get("content") != question_text:
+            self.state["history"].append({"role": "model", "content": question_text})
 
         # Real-time Reporting: Send current usage to backend after each turn
         # This allows the admin dashboard to see cost/token growth in real-time
