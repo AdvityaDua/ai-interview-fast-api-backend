@@ -301,6 +301,7 @@ Return JSON matching the schema exactly.
         closing_line = (state.get("closing_line") or "").strip()
         candidate_pool = list(state.get("source_question_candidates", []) or [])
         must_include_coding = bool(state.get("must_ask_coding_question", False) or state.get("needs_coding_question", False))
+        ended = False
 
         current_question = parsed.next_step.question.strip()
         if state.get("turn_number", 0) == 0 and opening_line:
