@@ -1,6 +1,6 @@
 # AI Interview Engine PRD (No-Embedding Architecture)
 
-## 1. Overview
+# 1. Overview
 This document defines the architecture and requirements for an AI-powered interview engine that conducts adaptive interviews without embeddings. The runtime model follows a one-time initialization phase and a strict two-node LangGraph execution loop aligned with the current implementation in app/services/ai/interview_graph.py.
 
 Design intent:
