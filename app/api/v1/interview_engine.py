@@ -16,6 +16,7 @@ from app.services.ai.langgraph_agent import (
     get_or_create_interview_plan,
     normalize_interview_state,
 )
+from app.services.ai.topic_interview_planner import generate_topic_plan
 from app.services.ai.source_interview_planner import question_fingerprint
 from app.services.ai.response_builder import build_turn_response
 from app.services.ai.token_optimized_agent import InterviewGraph
@@ -44,7 +45,7 @@ _DEVELOPER_ROLE_KEYWORDS = (
 
 
 class InitInterviewRequest(BaseModel):
-    resume_text: str = Field(..., min_length=1)
+    resume_text: str = Field(default="", min_length=0)
     jd_text: str = ""
     company: str = ""
     role: str = ""
@@ -52,6 +53,11 @@ class InitInterviewRequest(BaseModel):
     duration_minutes: int = 30
     client_id: str = ""
     session_id: str | None = None
+    # Topic-specific interview fields (alternative to resume_text)
+    topic_id: str | None = None
+    topic_name: str | None = None
+    difficulty: str | None = None  # junior|mid|senior|expert
+    subtopics: list[str] | None = None
 
 
 class RunTurnRequest(BaseModel):
@@ -89,15 +95,45 @@ async def init_interview_engine(
     prior_question_hashes = await load_history(user_id) if callable(load_history) else []
 
     t_plan_start = time.perf_counter()
-    plan = await get_or_create_interview_plan(
-        resume_text=payload.resume_text,
-        jd_text=payload.jd_text,
-        company_name=payload.company,
-        role=payload.role,
-        interview_type=payload.interview_type,
-        duration_minutes=payload.duration_minutes,
-        excluded_question_hashes=prior_question_hashes,
+    
+    # Determine if this is a topic-specific interview
+    is_topic_specific = (
+        payload.interview_type == "topic-specific" 
+        or payload.topic_id is not None
     )
+    
+    if is_topic_specific:
+        # Generate plan from topic configuration
+        if not payload.topic_id:
+            raise HTTPException(
+                status_code=400, 
+                detail="topic_id is required for topic-specific interviews"
+            )
+        plan = await generate_topic_plan(
+            topic_id=payload.topic_id,
+            difficulty=payload.difficulty or "mid",
+            duration_minutes=payload.duration_minutes,
+            subtopics=payload.subtopics,
+        )
+        interview_type = "topic-specific"
+    else:
+        # Generate plan from resume and JD (existing flow)
+        if not payload.resume_text.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="resume_text is required for standard interviews"
+            )
+        plan = await get_or_create_interview_plan(
+            resume_text=payload.resume_text,
+            jd_text=payload.jd_text,
+            company_name=payload.company,
+            role=payload.role,
+            interview_type=payload.interview_type,
+            duration_minutes=payload.duration_minutes,
+            excluded_question_hashes=prior_question_hashes,
+        )
+        interview_type = payload.interview_type
+    
     plan_ms = int((time.perf_counter() - t_plan_start) * 1000)
 
     session_id = payload.session_id or str(uuid4())
@@ -107,15 +143,15 @@ async def init_interview_engine(
     strategy = plan.get("question_strategy", {})
     state = create_default_interview_state(
         context_summary=(
-            f"Role: {payload.role or 'N/A'}\n"
+            f"Role: {payload.role or payload.topic_name or 'N/A'}\n"
             f"Company: {payload.company or 'N/A'}\n"
-            f"Interview type: {payload.interview_type}\n"
+            f"Interview type: {interview_type}\n"
             f"Planning topics: {', '.join(plan.get('topics', []))}"
         ),
-        interview_type=payload.interview_type,
+        interview_type=interview_type,
         role=payload.role,
         company=payload.company,
-        has_jd=bool(payload.jd_text.strip()),
+        has_jd=bool(payload.jd_text.strip()) if payload.jd_text else False,
         is_developer_role=is_developer_role,
         max_questions=int(strategy.get("question_budget", 0) or 0),
         max_questions_per_topic=int(strategy.get("max_questions_per_topic", 0) or 0),

@@ -274,6 +274,9 @@ async def stream_interview_endpoint(
                     resume_path = init_payload.get("resume_path", "")  # raw relative path from MongoDB
                     jd_text = init_payload.get("jd_text", "")
                     interview_type = init_payload.get("interview_type", "technical")
+                    interview_mode = init_payload.get("interview_mode", "general")
+                    topic_id = init_payload.get("topic_id", "")
+                    topic_name = init_payload.get("topic_name", "")
                     role = init_payload.get("role", "")
                     company = init_payload.get("company", "")
                     duration = init_payload.get("duration", 0)
@@ -282,6 +285,7 @@ async def stream_interview_endpoint(
                     # ── Debug: print everything received ──
                     print(f"[WS] ============ INIT PAYLOAD RECEIVED ============")
                     print(f"[WS] User: {user_id} | Round: {interview_type} | Role: {role} | Company: {company}")
+                    print(f"[WS] Mode: {interview_mode} | TopicId: {topic_id} | TopicName: {topic_name}")
                     print(f"[WS] Candidate name: {candidate_name!r}")
                     print(f"[WS] resume_text length from frontend: {len(resume_text)} chars")
                     print(f"[WS] resume_url:  {resume_url!r}")
@@ -336,9 +340,24 @@ async def stream_interview_endpoint(
                     print(f"[WS] ================================================")
                     print(f"[WS] Initializing context for {user_id} ({interview_type} round)...")
                     
-                    # Choose interviewer type: If company is specified, use the specialized CompanyInterviewer (JD/company-context driven)
-                    company = init_payload.get("company", "")
-                    if company and len(company.strip()) > 1:
+                    # Choose interviewer type.
+                    is_topic_mode = (
+                        str(interview_mode).lower() == "topic"
+                        or str(interview_type).lower() == "topic-specific"
+                        or bool(topic_id)
+                    )
+
+                    # Topic mode must not be routed to CompanyInterviewer.
+                    if is_topic_mode:
+                        print(f"[WS] 📚 Topic interviewer mode chosen for topic '{topic_name or topic_id or role}'")
+                        client = GeminiClient()
+                        session = StreamingInterviewSession(client)
+                        company = ""
+                        if not role and (topic_name or topic_id):
+                            role = f"{topic_name or topic_id} Engineer"
+                        if str(interview_type).lower() != "topic-specific":
+                            interview_type = "topic-specific"
+                    elif company and len(company.strip()) > 1:
                         print(f"[WS] 🚀 Specialized Company Interviewer chosen for '{company}'")
                         client = CompanyGeminiClient()
                         session = CompanyInterviewSession(client)

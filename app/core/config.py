@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
     PISTON_URL: str = "http://localhost:2000"
     BACKEND_URL: str = "http://localhost:3000"  # Used for reporting token usage to NestJS analytics
+    NEST_API_BASE_URL: Optional[str] = None  # If unset, BACKEND_URL is used
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:3001,http://localhost:5173,http://localhost:5174,https://aiforjob.ai,https://www.aiforjob.ai"
 
     class Config:
