@@ -18,24 +18,48 @@ class GeminiClient:
         self.model_name = model_name or key_manager.get_gemini_model()
 
     async def _with_retry(self, func, *args, **kwargs):
-        """Helper to retry AI calls on 503 (high demand) errors with exponential backoff."""
-        max_retries = 3
-        delay = 1.0  # seconds
+        """Helper to retry AI calls on 503 (high demand) errors with model fallback."""
+        # Fallback model chain: if primary model is overloaded, try these in order
+        FALLBACK_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"]
         
-        for attempt in range(max_retries):
+        # First attempt: try with primary model (up to 2 retries)
+        primary_model = self.model_name
+        for attempt in range(2):
             try:
                 return await asyncio.to_thread(func, *args, **kwargs)
             except Exception as e:
-                # Check for 503 Service Unavailable in the error message
                 error_str = str(e).upper()
                 if "503" in error_str or "UNAVAILABLE" in error_str:
-                    if attempt < max_retries - 1:
-                        wait_time = delay * (2 ** attempt)
-                        print(f"[GeminiClient] 503 High Demand detected. Retrying in {wait_time}s (Attempt {attempt+1}/{max_retries})...")
-                        await asyncio.sleep(wait_time)
+                    if attempt < 1:
+                        print(f"[GeminiClient] 503 on {primary_model}. Retrying in 2s (attempt {attempt+1}/2)...")
+                        await asyncio.sleep(2.0)
                         continue
-                # If it's not a 503 or we're out of retries, raise it
+                else:
+                    raise e
+        
+        # Primary model exhausted — try fallback models
+        for fallback in FALLBACK_MODELS:
+            if fallback == primary_model:
+                continue  # skip if same as primary
+            print(f"[GeminiClient] ⚠️ Primary model '{primary_model}' overloaded. Falling back to '{fallback}'...")
+            # Temporarily swap model for this call
+            original_model = self.model_name
+            self.model_name = fallback
+            try:
+                # Re-call the function — but we need to inject model name for direct calls
+                result = await asyncio.to_thread(func, *args, **kwargs)
+                print(f"[GeminiClient] ✅ Fallback to '{fallback}' succeeded.")
+                return result
+            except Exception as e:
+                error_str = str(e).upper()
+                if "503" in error_str or "UNAVAILABLE" in error_str:
+                    print(f"[GeminiClient] '{fallback}' also overloaded, trying next...")
+                    continue
                 raise e
+            finally:
+                self.model_name = original_model
+        
+        raise Exception(f"All models overloaded (503). Last tried: {FALLBACK_MODELS}. Please try again shortly.")
 
     async def summarize_context(self, resume_text: str, jd_text: str, interview_type: str = "technical", role: str = "", company: str = "", candidate_name: str = "") -> str:
         type_focus = {

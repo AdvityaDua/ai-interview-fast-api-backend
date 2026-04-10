@@ -226,27 +226,28 @@ class StreamingInterviewSession:
                 f"Return ONLY a comma-separated list, ordered by importance (JD-required skills first), "
                 f"no numbering, no explanation.\n\n{context}"
             )
-            # Use retry wrapper to handle 503 high-demand errors during initialization
-            max_retries = 3
-            delay = 1.0
+            # Use retry + model fallback to handle 503 high-demand errors during initialization
+            FALLBACK_MODELS = [self.client.model_name, "gemini-2.0-flash", "gemini-1.5-flash"]
             skills_res = None
-            for attempt in range(max_retries):
+            for fb_model in FALLBACK_MODELS:
                 try:
-                    import asyncio as _asyncio
-                    skills_res = await _asyncio.to_thread(
+                    skills_res = await asyncio.to_thread(
                         self.client.client.models.generate_content,
-                        model=self.client.model_name,
+                        model=fb_model,
                         contents=skills_prompt
                     )
+                    if fb_model != self.client.model_name:
+                        print(f"[Session] ✅ Skills extraction fallback to '{fb_model}' succeeded.")
                     break
                 except Exception as _e:
                     _err = str(_e).upper()
-                    if ("503" in _err or "UNAVAILABLE" in _err) and attempt < max_retries - 1:
-                        wait = delay * (2 ** attempt)
-                        print(f"[Session] 503 High Demand on skills extraction. Retrying in {wait}s (attempt {attempt+1}/{max_retries})...")
-                        await asyncio.sleep(wait)
-                    else:
-                        raise _e
+                    if "503" in _err or "UNAVAILABLE" in _err:
+                        print(f"[Session] ⚠️ 503 on '{fb_model}' skills extraction, trying next model...")
+                        await asyncio.sleep(2.0)
+                        continue
+                    raise _e
+            if skills_res is None:
+                raise Exception("All models overloaded (503) during skills extraction. Please try again shortly.")
             initial_skills = [s.strip() for s in skills_res.text.split(',') if s.strip()][:12]
             
             if hasattr(skills_res, 'usage_metadata'):
