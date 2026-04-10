@@ -226,7 +226,28 @@ class StreamingInterviewSession:
                 f"Return ONLY a comma-separated list, ordered by importance (JD-required skills first), "
                 f"no numbering, no explanation.\n\n{context}"
             )
-            skills_res = await self.client.client.aio.models.generate_content(model=self.client.model_name, contents=skills_prompt)
+            # Use retry + model fallback to handle 503 high-demand errors during initialization
+            FALLBACK_MODELS = [self.client.model_name, "gemini-2.0-flash", "gemini-1.5-flash"]
+            skills_res = None
+            for fb_model in FALLBACK_MODELS:
+                try:
+                    skills_res = await asyncio.to_thread(
+                        self.client.client.models.generate_content,
+                        model=fb_model,
+                        contents=skills_prompt
+                    )
+                    if fb_model != self.client.model_name:
+                        print(f"[Session] ✅ Skills extraction fallback to '{fb_model}' succeeded.")
+                    break
+                except Exception as _e:
+                    _err = str(_e).upper()
+                    if "503" in _err or "UNAVAILABLE" in _err:
+                        print(f"[Session] ⚠️ 503 on '{fb_model}' skills extraction, trying next model...")
+                        await asyncio.sleep(2.0)
+                        continue
+                    raise _e
+            if skills_res is None:
+                raise Exception("All models overloaded (503) during skills extraction. Please try again shortly.")
             initial_skills = [s.strip() for s in skills_res.text.split(',') if s.strip()][:12]
             
             if hasattr(skills_res, 'usage_metadata'):
