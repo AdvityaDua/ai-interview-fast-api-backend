@@ -84,15 +84,27 @@ class ResumeEnhancerService:
         - DO NOT hallucinate fake education, certifications, or experience. If the data is missing from ANALYSIS DATA or RAW RESUME TEXT, return empty lists for those fields.
         """
         
-        response = client.models.generate_content(
-            model=key_manager.get_gemini_model(),
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=ResumeBuilderResponse,
-                temperature=0.1,
-            )
-        )
+        import time
+        retries = 3
+        response = None
+        for attempt in range(retries):
+            try:
+                response = client.models.generate_content(
+                    model=key_manager.get_gemini_model(),
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=ResumeBuilderResponse,
+                        temperature=0.1,
+                    )
+                )
+                break
+            except Exception as e:
+                if "503" in str(e) and attempt < retries - 1:
+                    print(f"[Resume] Gemini API 503 error, retrying in 5 seconds... ({attempt+1}/{retries})")
+                    time.sleep(5)
+                else:
+                    raise
         
         # Report token usage — await directly since we're already in async context
         um = getattr(response, 'usage_metadata', None)
