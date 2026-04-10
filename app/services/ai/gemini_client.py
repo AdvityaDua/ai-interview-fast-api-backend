@@ -17,6 +17,26 @@ class GeminiClient:
         self.api_key = api_key
         self.model_name = model_name or key_manager.get_gemini_model()
 
+    async def _with_retry(self, func, *args, **kwargs):
+        """Helper to retry AI calls on 503 (high demand) errors with exponential backoff."""
+        max_retries = 3
+        delay = 1.0  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                return await asyncio.to_thread(func, *args, **kwargs)
+            except Exception as e:
+                # Check for 503 Service Unavailable in the error message
+                error_str = str(e).upper()
+                if "503" in error_str or "UNAVAILABLE" in error_str:
+                    if attempt < max_retries - 1:
+                        wait_time = delay * (2 ** attempt)
+                        print(f"[GeminiClient] 503 High Demand detected. Retrying in {wait_time}s (Attempt {attempt+1}/{max_retries})...")
+                        await asyncio.sleep(wait_time)
+                        continue
+                # If it's not a 503 or we're out of retries, raise it
+                raise e
+
     async def summarize_context(self, resume_text: str, jd_text: str, interview_type: str = "technical", role: str = "", company: str = "", candidate_name: str = "") -> str:
         type_focus = {
             "technical": "Focus on: technical skills, programming languages, frameworks, system design experience, algorithms knowledge.",
@@ -75,7 +95,7 @@ class GeminiClient:
         Interview Focus Areas (tailored for {interview_type} round — JD requirements come first)
         """
         
-        response = await asyncio.to_thread(
+        response = await self._with_retry(
             self.client.models.generate_content,
             model=self.model_name,
             contents=prompt
@@ -186,7 +206,7 @@ class GeminiClient:
         Evaluate the last user response (if any) and generate the next step.
         """
 
-        response = await asyncio.to_thread(
+        response = await self._with_retry(
             self.client.models.generate_content,
             model=self.model_name,
             contents=prompt,
@@ -240,7 +260,7 @@ class GeminiClient:
         Generate the final detailed evaluation report.
         """
         
-        response = await asyncio.to_thread(
+        response = await self._with_retry(
             self.client.models.generate_content,
             model=self.model_name,
             contents=prompt,

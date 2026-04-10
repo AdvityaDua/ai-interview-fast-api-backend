@@ -226,7 +226,27 @@ class StreamingInterviewSession:
                 f"Return ONLY a comma-separated list, ordered by importance (JD-required skills first), "
                 f"no numbering, no explanation.\n\n{context}"
             )
-            skills_res = await self.client.client.aio.models.generate_content(model=self.client.model_name, contents=skills_prompt)
+            # Use retry wrapper to handle 503 high-demand errors during initialization
+            max_retries = 3
+            delay = 1.0
+            skills_res = None
+            for attempt in range(max_retries):
+                try:
+                    import asyncio as _asyncio
+                    skills_res = await _asyncio.to_thread(
+                        self.client.client.models.generate_content,
+                        model=self.client.model_name,
+                        contents=skills_prompt
+                    )
+                    break
+                except Exception as _e:
+                    _err = str(_e).upper()
+                    if ("503" in _err or "UNAVAILABLE" in _err) and attempt < max_retries - 1:
+                        wait = delay * (2 ** attempt)
+                        print(f"[Session] 503 High Demand on skills extraction. Retrying in {wait}s (attempt {attempt+1}/{max_retries})...")
+                        await asyncio.sleep(wait)
+                    else:
+                        raise _e
             initial_skills = [s.strip() for s in skills_res.text.split(',') if s.strip()][:12]
             
             if hasattr(skills_res, 'usage_metadata'):
