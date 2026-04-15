@@ -19,6 +19,7 @@ from typing import List, Optional
 from app.api.dependencies import get_current_user
 from app.core.key_manager import key_manager
 from google import genai
+from google.genai import types
 
 router = APIRouter()
 
@@ -38,8 +39,26 @@ class GenerateCoverLetterRequest(BaseModel):
     roleTitle: Optional[str] = None
 
 
+class CoverLetterData(BaseModel):
+    applicantName: str
+    email: str
+    phone: str
+    location: str
+    linkedin: Optional[str] = None
+    website: Optional[str] = None
+    date: str
+    hiringManagerName: str
+    hiringManagerTitle: str
+    companyName: str
+    companyAddress: str
+    roleTitle: str
+    openingParagraph: str
+    bodyParagraphs: List[str]
+    closingParagraph: str
+    salutation: str
+
 class CoverLetterResponse(BaseModel):
-    cover_letter: dict
+    cover_letter: CoverLetterData
 
 
 # ---------------------------------------------------------------------------
@@ -185,23 +204,15 @@ async def generate_cover_letter(
             client.models.generate_content,
             model=model_name,
             contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=CoverLetterData,
+                temperature=0.7,
+            )
         )
-        raw = response.text.strip()
+        data = CoverLetterData.model_validate_json(response.text).model_dump()
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI generation failed: {e}")
-
-    # Strip markdown fences if the model wrapped despite instructions
-    raw = re.sub(r"^```(?:json)?\s*", "", raw)
-    raw = re.sub(r"\s*```$", "", raw)
-
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        # Try to extract the first {...} block
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if not match:
-            raise HTTPException(status_code=502, detail="AI returned unparseable response")
-        data = json.loads(match.group())
 
     # Ensure required keys have sensible defaults if the model omitted them
     today = datetime.now().strftime("%B %d, %Y")

@@ -28,7 +28,7 @@ class KeyManager:
     async def refresh(self, backend_url: str) -> None:
         """Fetch active keys from NestJS /ai-config/keys/internal (no auth required)."""
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=15.0) as client:
                 r = await client.get(f"{backend_url}/ai-config/keys/internal")
                 if r.status_code == 200:
                     data = r.json()
@@ -49,7 +49,7 @@ class KeyManager:
                 else:
                     logger.warning(f"[KeyManager] Backend returned {r.status_code}, using cached/env fallback")
         except Exception as e:
-            logger.warning(f"[KeyManager] Could not reach backend ({e}), using cached/env fallback")
+            logger.warning(f"[KeyManager] Could not reach backend ({type(e).__name__}: {e}), using cached/env fallback")
 
     async def _auto_refresh_loop(self) -> None:
         """Background task: re-fetch keys every REFRESH_INTERVAL seconds."""
@@ -79,7 +79,7 @@ class KeyManager:
 
     def get_gemini_model(self) -> str:
         """Returns the admin-configured Gemini model, falling back to the cost-effective default."""
-        return self._gemini_model or os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+        return self._gemini_model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
     def get_groq_model(self) -> str:
         """Returns the admin-configured Groq model, falling back to the cost-effective default."""

@@ -4,7 +4,8 @@
 import json, time, logging, os
 from dotenv import load_dotenv
 from .prompts import UNIFIED_EVALUATION_PROMPT, CV_ONLY_EVALUATION_PROMPT, IMPROVEMENT_PROMPT, CV_ONLY_IMPROVEMENT_PROMPT
-
+from pydantic import BaseModel
+from typing import List, Optional
 
 from google import genai
 from google.genai import types
@@ -14,6 +15,54 @@ from app.core.key_manager import key_manager
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+# --- Pydantic Schemas for Strict JSON Generation ---
+
+class SubScore(BaseModel):
+    dimension: str
+    score: float
+    max_score: float
+    evidence: List[str]
+
+class ScoreSection(BaseModel):
+    overall_score: float
+    subscores: List[SubScore]
+
+class KeyTakeaways(BaseModel):
+    red_flags: List[str]
+    green_flags: List[str]
+
+class EvaluateResponseSchema(BaseModel):
+    cv_quality: ScoreSection
+    jd_match: Optional[ScoreSection] = None
+    key_takeaways: KeyTakeaways
+
+class PersonalInfo(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    location: Optional[str] = None
+    linkedin: Optional[str] = None
+    github: Optional[str] = None
+    website: Optional[str] = None
+
+class TailoredResume(BaseModel):
+    personal_info: PersonalInfo
+    summary: str
+    experience: List[str]
+    skills: List[str]
+    projects: List[str]
+
+class Top1PercentGap(BaseModel):
+    strengths: List[str]
+    gaps: List[str]
+    actionable_next_steps: List[str]
+
+class ImprovementResponseSchema(BaseModel):
+    tailored_resume: TailoredResume
+    top_1_percent_gap: Top1PercentGap
+    cover_letter: str
+
+# ----------------------------------------------------
 class LLMScorer:
     def __init__(self, client=None, model=None, temperature=0.0, timeout=60):
         api_key = key_manager.get_gemini_key() or os.getenv("GOOGLE_API_KEY")
@@ -45,7 +94,7 @@ class LLMScorer:
         else:
             prompt = CV_ONLY_EVALUATION_PROMPT.format(cv_text=cv_text)
 
-        raw = self._call_llm(prompt)
+        raw = self._call_llm(prompt, schema=EvaluateResponseSchema)
         cleaned = self._extract_json_from_response(raw)
         try:
             return json.loads(cleaned)
@@ -59,18 +108,22 @@ class LLMScorer:
         return self.unified_evaluate(cv_text=cv_text, jd_text="")
 
     # ---------- Internals ----------
-    def _call_llm(self, prompt: str) -> str:
+    def _call_llm(self, prompt: str, schema: Optional[type[BaseModel]] = None) -> str:
         for attempt in range(3):
             try:
+                config_kwargs = {
+                    "system_instruction": "You are a strict JSON generator. Your output must be valid JSON only. Always escape double quotes and special characters within strings. Do not include trailing commas. Do not include markdown block tokens like ```json at the start or end of your response — return ONLY the raw JSON string.",
+                    "temperature": self.temperature,
+                    "max_output_tokens": 4096,
+                    "response_mime_type": "application/json",
+                }
+                if schema is not None:
+                    config_kwargs["response_schema"] = schema
+
                 resp = self.client.models.generate_content(
                     model=self.model,
                     contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction="You are a strict JSON generator. Your output must be valid JSON only. Always escape double quotes and special characters within strings. Do not include trailing commas. Do not include markdown block tokens like ```json at the start or end of your response — return ONLY the raw JSON string.",
-                        temperature=self.temperature,
-                        max_output_tokens=4096,
-                        response_mime_type="application/json",
-                    )
+                    config=types.GenerateContentConfig(**config_kwargs)
                 )
                 # Accumulate Gemini token usage
                 um = getattr(resp, 'usage_metadata', None)
@@ -99,7 +152,7 @@ class LLMScorer:
         else:
             prompt = CV_ONLY_IMPROVEMENT_PROMPT.format(cv_text=cv_text)
 
-        raw = self._call_llm(prompt)
+        raw = self._call_llm(prompt, schema=ImprovementResponseSchema)
         cleaned = self._extract_json_from_response(raw)
         try:
             return json.loads(cleaned)
