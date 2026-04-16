@@ -1,6 +1,5 @@
 # cv_eval/llm_scorer.py
 
-
 import json, time, logging, os
 from dotenv import load_dotenv
 from .prompts import UNIFIED_EVALUATION_PROMPT, CV_ONLY_EVALUATION_PROMPT, IMPROVEMENT_PROMPT, CV_ONLY_IMPROVEMENT_PROMPT
@@ -15,7 +14,7 @@ from app.core.key_manager import key_manager
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-# --- Pydantic Schemas for Strict JSON Generation ---
+# --- Pydantic Schemas for Structured Output ---
 
 class SubScore(BaseModel):
     dimension: str
@@ -94,59 +93,14 @@ class LLMScorer:
         else:
             prompt = CV_ONLY_EVALUATION_PROMPT.format(cv_text=cv_text)
 
-        raw = self._call_llm(prompt, schema=EvaluateResponseSchema)
-        print(f"[CV-Eval DEBUG] raw type={type(raw).__name__}, raw len={len(raw) if raw else 'None'}")
-        print(f"[CV-Eval DEBUG] raw last 300 chars: ...{raw[-300:] if raw and len(raw) > 300 else raw}")
-        cleaned = self._extract_json_from_response(raw)
-        print(f"[CV-Eval DEBUG] cleaned len={len(cleaned)}")
-        print(f"[CV-Eval DEBUG] cleaned last 300 chars: ...{cleaned[-300:] if len(cleaned) > 300 else cleaned}")
-        try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError as jde:
-             # Last resort: try to fix common JSON issues if standard parse fails
-             logger.error(f"JSON Parse Error: {jde} for text: {cleaned[:100]}...")
-             raise json.JSONDecodeError(f"{jde.msg} (raw output was {len(cleaned)} chars)", jde.doc, jde.pos)
+        result = self._call_gemini(prompt, schema=EvaluateResponseSchema)
+        return self._fix_overall_scores(result)
 
     # ---------- CV only (legacy alias) ----------
     def evaluate_cv_only(self, cv_text: str) -> dict:
         return self.unified_evaluate(cv_text=cv_text, jd_text="")
 
-    # ---------- Internals ----------
-    def _call_llm(self, prompt: str, schema: Optional[type[BaseModel]] = None) -> str:
-        for attempt in range(3):
-            try:
-                config_kwargs = {
-                    "system_instruction": "You are a strict JSON generator. Your output must be valid JSON only. Always escape double quotes and special characters within strings. Do not include trailing commas. Do not include markdown block tokens like ```json at the start or end of your response — return ONLY the raw JSON string.",
-                    "temperature": self.temperature,
-                    "max_output_tokens": 4096,
-                    "response_mime_type": "application/json",
-                }
-                if schema is not None:
-                    config_kwargs["response_schema"] = schema
-
-                resp = self.client.models.generate_content(
-                    model=self.model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(**config_kwargs)
-                )
-                # Accumulate Gemini token usage
-                um = getattr(resp, 'usage_metadata', None)
-                if um:
-                    in_tokens  = getattr(um, 'prompt_token_count',     0)
-                    out_tokens = getattr(um, 'candidates_token_count', 0)
-                    if out_tokens == 0:
-                        out_tokens = getattr(um, 'total_token_count', 0) - in_tokens
-
-                    self.total_input_tokens  += in_tokens
-                    self.total_output_tokens += out_tokens
-                    print(f"[CV-Eval] Gemini call tokens: in={in_tokens}, out={out_tokens}  cumulative: in={self.total_input_tokens}, out={self.total_output_tokens}")
-                return resp.text.strip()
-            except Exception as e:
-                logger.error(f"Gemini API call failed (attempt {attempt+1}/3): {e}")
-                if attempt == 2:
-                    raise
-                time.sleep(1.5 ** attempt)
-    
+    # ---------- Improvement ----------
     def improvement(self, cv_text: str, jd_text: str = "") -> dict:
         if not cv_text.strip():
             raise ValueError("CV text is required for improvement")
@@ -156,42 +110,71 @@ class LLMScorer:
         else:
             prompt = CV_ONLY_IMPROVEMENT_PROMPT.format(cv_text=cv_text)
 
-        raw = self._call_llm(prompt, schema=ImprovementResponseSchema)
-        cleaned = self._extract_json_from_response(raw)
-        try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError as jde:
-            logger.error(f"JSON Parse Error (Improvement): {jde} for text: {cleaned[:100]}...")
-            raise json.JSONDecodeError(f"{jde.msg} (raw output was {len(cleaned)} chars)", jde.doc, jde.pos)
+        return self._call_gemini(prompt, schema=ImprovementResponseSchema)
 
-
+    # ---------- Score consistency ----------
     @staticmethod
-    def _extract_json_from_response(text: str) -> str:
-        # 1. Basic markdown stripping
-        if "```json" in text:
-            s = text.find("```json") + 7
-            e = text.rfind("```")
-            if e > s:
-                text = text[s:e].strip()
-        elif "```" in text:
-            s = text.find("```") + 3
-            e = text.rfind("```")
-            if e > s:
-                text = text[s:e].strip()
-        
-        # 2. Extract first level object/array
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1:
-            text = text[start:end+1]
-        
-        # 3. Robust Cleanup (common LLM failure modes)
-        # a) Remove trailing commas before closing braces/brackets
-        import re
-        text = re.sub(r',\s*([\]}])', r'\1', text)
-        
-        # b) Replace literal newlines inside values with \n if they are between quotes
-        # (This is tricky but simple regex can help common cases)
-        # text = re.sub(r'(".*?")', lambda m: m.group(1).replace('\n', '\\n'), text, flags=re.DOTALL)
-        
-        return text.strip()
+    def _fix_overall_scores(result: dict) -> dict:
+        """
+        Recompute overall_score as the exact sum of subscores.
+        This prevents the LLM from hallucinating a different total
+        and guarantees deterministic scores for the same subscore set.
+        """
+        for section_key in ("cv_quality", "jd_match"):
+            section = result.get(section_key)
+            if section and isinstance(section.get("subscores"), list) and section["subscores"]:
+                computed = round(sum(s["score"] for s in section["subscores"]), 1)
+                section["overall_score"] = computed
+        return result
+
+    # ---------- Core Gemini call with structured output ----------
+    def _call_gemini(self, prompt: str, schema: type[BaseModel]) -> dict:
+        """
+        Call Gemini with structured output (response_schema + response_mime_type).
+        JSON parsing happens inside the retry loop so malformed responses are retried.
+        Uses seed=42 for deterministic output on the same input.
+        """
+        last_error = None
+
+        for attempt in range(3):
+            try:
+                resp = self.client.models.generate_content(
+                    model=self.model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=self.temperature,
+                        seed=42,
+                        response_mime_type="application/json",
+                        response_schema=schema,
+                    ),
+                )
+
+                # Accumulate Gemini token usage
+                um = getattr(resp, 'usage_metadata', None)
+                if um:
+                    in_tokens  = getattr(um, 'prompt_token_count',     0)
+                    out_tokens = getattr(um, 'candidates_token_count', 0)
+                    if out_tokens == 0:
+                        out_tokens = getattr(um, 'total_token_count', 0) - in_tokens
+                    self.total_input_tokens  += in_tokens
+                    self.total_output_tokens += out_tokens
+                    print(f"[CV-Eval] Gemini tokens: in={in_tokens}, out={out_tokens}  cumulative: in={self.total_input_tokens}, out={self.total_output_tokens}")
+
+                # Parse response — inside retry loop so failures are retried
+                raw_text = resp.text.strip()
+                return json.loads(raw_text)
+
+            except json.JSONDecodeError as jde:
+                last_error = jde
+                logger.warning(f"JSON parse failed (attempt {attempt+1}/3): {jde.msg} at char {jde.pos}")
+                if attempt < 2:
+                    time.sleep(1.5 ** attempt)
+
+            except Exception as e:
+                last_error = e
+                logger.error(f"Gemini API call failed (attempt {attempt+1}/3): {e}")
+                if attempt < 2:
+                    time.sleep(1.5 ** attempt)
+
+        # All retries exhausted
+        raise last_error

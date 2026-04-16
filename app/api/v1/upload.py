@@ -68,7 +68,7 @@ async def _report_cv_token_usage(request: Request, usage: dict, source: str = "c
             r = await client.post(
                 f"{settings.BACKEND_URL}/analytics/ai-usage",
                 json=payload,
-                timeout=5.0,
+                timeout=15.0,
             )
         print(f"[CV-Upload] analytics POST status={r.status_code}")
     except Exception as e:

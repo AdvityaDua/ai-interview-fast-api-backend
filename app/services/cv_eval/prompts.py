@@ -15,6 +15,16 @@ Return ONLY valid JSON that strictly adheres to the schema provided at the end. 
 - For each dimension, provide a score based on the provided CV and Job Description.
 - For the `evidence` field in each subscore, you MUST provide an array of direct, concise quotes from the CV that justify your score.
 - If no evidence can be found for a dimension, the score MUST be 0 and the `evidence` array must contain the single string "No evidence found.".
+- **CRITICAL: `overall_score` MUST be the exact mathematical sum of all subscore values in that section.** Do NOT round, estimate, or adjust the total — just add the numbers.
+
+**SCORE CALIBRATION (for dimensions scored out of 10):**
+- 0-3: Major deficiencies — fundamentally missing or very poor.
+- 4-5: Below average — present but with significant weaknesses.
+- 6-7: Competent — meets basic expectations but nothing outstanding.
+- 8: Good — clearly strong with minor room for improvement.
+- 9-10: Exceptional — near-perfect, with compelling evidence. Reserve 10 for truly flawless execution.
+- Apply the same proportional scale for dimensions scored out of 15, 20, or 35.
+- Be strict and realistic. Most average resumes should score 50-65/100, not 80+.
 
 **2. PART 1: CV QUALITY (100 points total)**
 Evaluate the CV's intrinsic quality, independent of the job description.
@@ -103,6 +113,16 @@ Return ONLY valid JSON that strictly adheres to the schema provided at the end. 
 - For each dimension, provide a score based on the provided CV.
 - For the `evidence` field in each subscore, you MUST provide an array of direct, concise quotes from the CV that justify your score.
 - If no evidence can be found for a dimension, the score MUST be 0 and the `evidence` array must contain the single string "No evidence found.".
+- **CRITICAL: `overall_score` MUST be the exact mathematical sum of all subscore values.** Do NOT round, estimate, or adjust the total — just add the numbers.
+
+**SCORE CALIBRATION (for dimensions scored out of 10):**
+- 0-3: Major deficiencies — fundamentally missing or very poor.
+- 4-5: Below average — present but with significant weaknesses.
+- 6-7: Competent — meets basic expectations but nothing outstanding.
+- 8: Good — clearly strong with minor room for improvement.
+- 9-10: Exceptional — near-perfect, with compelling evidence. Reserve 10 for truly flawless execution.
+- Apply the same proportional scale for dimensions scored out of 15, 20, or 35.
+- Be strict and realistic. Most average resumes should score 50-65/100, not 80+.
 
 **2. PART 1: CV QUALITY (100 points total)**
 Evaluate the CV's intrinsic quality:
