@@ -95,7 +95,11 @@ class LLMScorer:
             prompt = CV_ONLY_EVALUATION_PROMPT.format(cv_text=cv_text)
 
         raw = self._call_llm(prompt, schema=EvaluateResponseSchema)
+        print(f"[CV-Eval DEBUG] raw type={type(raw).__name__}, raw len={len(raw) if raw else 'None'}")
+        print(f"[CV-Eval DEBUG] raw last 300 chars: ...{raw[-300:] if raw and len(raw) > 300 else raw}")
         cleaned = self._extract_json_from_response(raw)
+        print(f"[CV-Eval DEBUG] cleaned len={len(cleaned)}")
+        print(f"[CV-Eval DEBUG] cleaned last 300 chars: ...{cleaned[-300:] if len(cleaned) > 300 else cleaned}")
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError as jde:
@@ -166,12 +170,14 @@ class LLMScorer:
         # 1. Basic markdown stripping
         if "```json" in text:
             s = text.find("```json") + 7
-            e = text.find("```", s)
-            text = text[s:e].strip()
+            e = text.rfind("```")
+            if e > s:
+                text = text[s:e].strip()
         elif "```" in text:
             s = text.find("```") + 3
-            e = text.find("```", s)
-            text = text[s:e].strip()
+            e = text.rfind("```")
+            if e > s:
+                text = text[s:e].strip()
         
         # 2. Extract first level object/array
         start = text.find("{")
