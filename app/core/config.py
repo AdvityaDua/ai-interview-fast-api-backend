@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     NEST_API_BASE_URL: Optional[str] = None  # If unset, BACKEND_URL is used
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:3001,http://localhost:5173,http://localhost:5174,https://aiforjob.ai,https://www.aiforjob.ai"
 
+    # Fine-tuned LLM gateway configuration
+    FINE_TUNED_GATEWAY_URL: str = "https://aiforjob-fine-tune-gateway-66976dwa2.brevlab.com"
+    FINE_TUNED_INTERVIEWER_ENABLED: bool = False
+    FINE_TUNED_EVALUATOR_ENABLED: bool = False
+
     class Config:
         env_file = ".env"
         extra = "ignore"

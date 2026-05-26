@@ -29,6 +29,18 @@ async def lifespan(app: FastAPI):
     if "localhost" in settings.BACKEND_URL:
         print("[WARNING] BACKEND_URL points to localhost — token reporting will FAIL in production!")
         print("[WARNING] Set BACKEND_URL env var to your production NestJS URL.")
+    # ── Fine-tuned gateway health check (non-blocking) ────────────────────
+    if settings.FINE_TUNED_INTERVIEWER_ENABLED or settings.FINE_TUNED_EVALUATOR_ENABLED:
+        try:
+            from app.services.ai.fine_tuned_gateway import gateway_client
+            health_ok = await gateway_client.health_check()
+            gw_status = "✓ reachable" if health_ok else "✗ UNREACHABLE (will fallback to Gemini)"
+        except Exception as gw_exc:
+            gw_status = f"✗ ERROR: {gw_exc}"
+        print(f"[CONFIG] FINE_TUNED_GATEWAY   = {gw_status}")
+        print(f"[CONFIG]   INTERVIEWER_ENABLED = {settings.FINE_TUNED_INTERVIEWER_ENABLED}")
+        print(f"[CONFIG]   EVALUATOR_ENABLED   = {settings.FINE_TUNED_EVALUATOR_ENABLED}")
+        print(f"[CONFIG]   GATEWAY_URL         = {settings.FINE_TUNED_GATEWAY_URL}")
     print("=" * 60)
     yield
     # ── Shutdown ─────────────────────────────────────────────────────────────

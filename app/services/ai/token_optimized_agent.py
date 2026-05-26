@@ -8,14 +8,19 @@ output schema that combines answer evaluation and next-question generation.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
+import time
 from typing import Any, Dict, List, Optional, TypedDict
 
 from pydantic import BaseModel, Field
 
+from app.core.config import settings
 from app.core.key_manager import key_manager
 from .llama_client import LlamaClient
 from .llama_graph import LlamaInterviewGraph
+from .gemini_client import GeminiClient
+from .fine_tuned_gateway import gateway_client
 from .source_interview_planner import question_fingerprint
 from .schemas import (
     Action,
@@ -29,6 +34,8 @@ from .schemas import (
     NextStepType,
     SignalStrength,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class InterviewState(TypedDict):
@@ -146,7 +153,7 @@ def _pick_coding_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] |
 
 
 class InterviewGraph:
-    """Interview engine — delegates to LlamaInterviewGraph backed by fine-tuned LLaMA."""
+    """Interview engine — delegates to LlamaInterviewGraph backed by fine-tuned LLaMA, with Gateway priority."""
 
     def __init__(
         self,
@@ -159,14 +166,6 @@ class InterviewGraph:
         self.client = llama_client
         self.model_name = "llama-finetuned"
 
-    async def run_turn(self, state: InterviewState) -> InterviewState:
-        return await self._llama_graph.run_turn(state)
-
-    @staticmethod
-    def _bump_topic_counts(state: InterviewState, target_skill: str) -> Dict[str, int]:
-        return LlamaInterviewGraph._bump_topic_counts(state, target_skill)
-
-    # Keep these so nothing that imports them breaks; they are no longer called.
     def _build_system_instruction(self, state: InterviewState) -> str:
         interview_type = state.get("interview_type", "technical")
         role = state.get("role", "")
@@ -267,3 +266,261 @@ RULES
 Return JSON matching the schema exactly.
 """.strip()
 
+    # ── Fine-tuned gateway integration ────────────────────────────────────────
+
+    async def _try_gateway_turn(
+        self, state: InterviewState, system_instruction: str, prompt: str
+    ) -> Optional[OptimizedTurnOutput]:
+        """Attempt to run the turn through the fine-tuned gateway.
+
+        Splits the single combined call into two sequential requests:
+          1. /evaluator  — evaluates the candidate's last answer
+          2. /interviewer — generates the next question
+
+        Merges results into an OptimizedTurnOutput.
+        Returns None on any failure (caller should fall back).
+        """
+        use_evaluator = settings.FINE_TUNED_EVALUATOR_ENABLED
+        use_interviewer = settings.FINE_TUNED_INTERVIEWER_ENABLED
+
+        if not use_evaluator and not use_interviewer:
+            return None
+
+        start = time.monotonic()
+        eval_data: Optional[dict] = None
+        interviewer_data: Optional[dict] = None
+
+        # ── Step 1: Evaluate the candidate's last answer ─────────────────────
+        if use_evaluator and state.get("last_user_input"):
+            eval_messages = [
+                {"role": "system", "content": system_instruction},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Evaluate the candidate's answer.\n\n{prompt}\n\n"
+                        f"Return JSON with fields: performance_summary, answer_type, "
+                        f"answer_quality, should_follow_up, follow_up_hint, "
+                        f"newly_covered_skills, confidence_in_candidate."
+                    ),
+                },
+            ]
+            eval_data = await gateway_client.generate_evaluator_response(
+                messages=eval_messages, temperature=0.25, max_tokens=1024
+            )
+            if eval_data is None:
+                logger.warning(
+                    "[FineTunedGateway] Evaluator call failed — falling back for entire turn"
+                )
+                return None
+
+        # ── Step 2: Generate the next question ───────────────────────────────
+        if use_interviewer:
+            # Enrich the interviewer prompt with evaluation context if available
+            eval_context = ""
+            if eval_data:
+                eval_context = (
+                    f"\nEVALUATION CONTEXT (from evaluator):\n"
+                    f"- answer_type: {eval_data.get('answer_type', 'genuine_answer')}\n"
+                    f"- answer_quality: {eval_data.get('answer_quality', 'not_applicable')}\n"
+                    f"- should_follow_up: {eval_data.get('should_follow_up', False)}\n"
+                    f"- follow_up_hint: {eval_data.get('follow_up_hint', '')}\n"
+                    f"- performance_summary: {eval_data.get('performance_summary', '')}\n"
+                )
+
+            interviewer_messages = [
+                {"role": "system", "content": system_instruction},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Generate the next interview question.\n\n{prompt}"
+                        f"{eval_context}\n\n"
+                        f"Return JSON with fields: decision (action, reason, termination_flag), "
+                        f"next_step (type, difficulty, question, target_skill, is_coding_question), "
+                        f"performance_summary, answer_type, answer_quality, should_follow_up, "
+                        f"follow_up_hint, newly_covered_skills, confidence_in_candidate."
+                    ),
+                },
+            ]
+            interviewer_data = await gateway_client.generate_interviewer_response(
+                messages=interviewer_messages, temperature=0.7, max_tokens=1024
+            )
+            if interviewer_data is None:
+                logger.warning(
+                    "[FineTunedGateway] Interviewer call failed — falling back for entire turn"
+                )
+                return None
+
+        # ── Step 3: Merge results into OptimizedTurnOutput ───────────────────
+        try:
+            merged: Dict[str, Any] = {}
+
+            # Start with evaluator data if available
+            if eval_data:
+                merged.update(eval_data)
+
+            # Overlay interviewer data (question generation takes precedence for
+            # decision/next_step fields)
+            if interviewer_data:
+                merged.update(interviewer_data)
+                # But keep evaluator's evaluation fields if interviewer didn't provide them
+                if eval_data:
+                    for key in ("answer_type", "answer_quality", "should_follow_up",
+                                "follow_up_hint", "newly_covered_skills"):
+                        if key not in interviewer_data and key in eval_data:
+                            merged[key] = eval_data[key]
+
+            # If only one endpoint was called, use its data directly
+            if not eval_data and interviewer_data:
+                merged = interviewer_data
+            elif eval_data and not interviewer_data:
+                merged = eval_data
+
+            parsed = OptimizedTurnOutput.model_validate(merged)
+            duration_ms = int((time.monotonic() - start) * 1000)
+            logger.info(
+                "[FineTunedGateway] Turn completed via gateway (%dms, "
+                "evaluator=%s, interviewer=%s)",
+                duration_ms,
+                "used" if eval_data else "skipped",
+                "used" if interviewer_data else "skipped",
+            )
+            return parsed
+
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            logger.warning(
+                "[FineTunedGateway] Failed to parse merged gateway response (%dms): "
+                "%s: %s — falling back",
+                duration_ms, type(exc).__name__, exc,
+            )
+            return None
+
+    # ── Main turn execution ──────────────────────────────────────────────────
+
+    async def run_turn(self, state: InterviewState) -> InterviewState:
+        if state.get("ended"):
+            return state
+
+        system_instruction = self._build_system_instruction(state)
+        prompt = self._build_prompt(state)
+
+        # ── Try fine-tuned gateway first (if enabled) ────────────────────────
+        parsed: Optional[OptimizedTurnOutput] = None
+        input_tokens = 0
+        output_tokens = 0
+
+        if settings.FINE_TUNED_INTERVIEWER_ENABLED or settings.FINE_TUNED_EVALUATOR_ENABLED:
+            parsed = await self._try_gateway_turn(state, system_instruction, prompt)
+            # Gateway does not report token usage — counts stay at 0 for gateway turns
+
+        # ── Fallback to LlamaInterviewGraph ────────────────────────────────────────────────
+        if parsed is None:
+            return await self._llama_graph.run_turn(state)
+
+        skills_remaining = list(state.get("skills_remaining", []))
+        skills_covered = list(state.get("skills_covered", []))
+        new_skills = [skill for skill in parsed.newly_covered_skills if skill and skill not in skills_covered]
+        if new_skills:
+            skills_covered.extend(new_skills)
+            skills_remaining = [skill for skill in skills_remaining if skill not in new_skills]
+
+        if parsed.should_follow_up and parsed.follow_up_hint:
+            follow_up_hint = parsed.follow_up_hint
+        else:
+            follow_up_hint = ""
+
+        questions_asked = list(state.get("questions_asked", []))
+        questions_asked.append(parsed.next_step.question)
+
+        opening_line = (state.get("opening_line") or "").strip()
+        closing_line = (state.get("closing_line") or "").strip()
+        candidate_pool = list(state.get("source_question_candidates", []) or [])
+        must_include_coding = bool(state.get("must_ask_coding_question", False) or state.get("needs_coding_question", False))
+        ended = False
+
+        current_question = parsed.next_step.question.strip()
+        if state.get("turn_number", 0) == 0 and opening_line:
+            if current_question and not _looks_like_greeting(current_question):
+                current_question = f"{opening_line} {current_question}".strip()
+            elif not current_question:
+                current_question = opening_line
+
+        if (
+            must_include_coding
+            and state.get("coding_questions_asked", 0) == 0
+            and state.get("turn_number", 0) > 0
+            and not ended
+        ):
+            coding_candidate = _pick_coding_candidate(candidate_pool)
+            if coding_candidate is not None:
+                current_question = str(coding_candidate.get("question", current_question)).strip() or current_question
+                parsed.next_step.is_coding_question = True
+                parsed.next_step.question = current_question
+                parsed.next_step.target_skill = str(coding_candidate.get("topic", parsed.next_step.target_skill))
+                parsed.next_step.type = parsed.next_step.type or NextStepType.FOLLOW_UP
+
+        last_answer_type = parsed.answer_type
+        if last_answer_type in {"confused", "refused", "off_topic", "wait_requested"}:
+            consecutive_non_answers = state.get("consecutive_non_answers", 0) + 1
+        else:
+            consecutive_non_answers = 0
+
+        if last_answer_type in {"refused", "off_topic"}:
+            consecutive_disengaged = state.get("consecutive_disengaged", 0) + 1
+        else:
+            consecutive_disengaged = 0
+
+        ended = parsed.decision.action == Action.END or parsed.decision.termination_flag
+        end_reason = parsed.decision.reason if ended else state.get("end_reason", "")
+
+        if ended and closing_line:
+            current_question = closing_line
+
+        current_evaluation = parsed.model_dump()
+        current_evaluation["next_step"] = parsed.next_step.model_dump()
+        current_evaluation["decision"] = parsed.decision.model_dump()
+        if parsed.last_answer_evaluation is not None:
+            current_evaluation["last_answer_evaluation"] = parsed.last_answer_evaluation.model_dump()
+
+        if ended and closing_line:
+            current_evaluation["next_step"]["question"] = closing_line
+
+        if candidate_pool:
+            candidate_fingerprints = {str(item.get("fingerprint", "")) for item in candidate_pool if isinstance(item, dict)}
+            if candidate_fingerprints and question_fingerprint(current_question) in candidate_fingerprints:
+                current_evaluation["next_step"]["question"] = current_question
+
+        history = list(state.get("history", []))
+        if state.get("last_user_input"):
+            history.append({"role": "user", "content": state["last_user_input"]})
+        history.append({"role": "model", "content": current_question})
+
+        return {
+            **state,
+            "history": history,
+            "performance_summary": parsed.performance_summary,
+            "skills_remaining": skills_remaining,
+            "skills_covered": skills_covered,
+            "questions_asked": questions_asked,
+            "current_question": current_question,
+            "current_evaluation": current_evaluation,
+            "follow_up_hint": follow_up_hint,
+            "coding_questions_asked": state.get("coding_questions_asked", 0) + (1 if parsed.next_step.is_coding_question else 0),
+            "last_question_was_coding": parsed.next_step.is_coding_question and not ended,
+            "turn_number": state.get("turn_number", 0) + 1,
+            "last_answer_type": last_answer_type,
+            "consecutive_non_answers": consecutive_non_answers,
+            "ended": ended,
+            "end_reason": end_reason,
+            "topic_question_counts": self._bump_topic_counts(state, parsed.next_step.target_skill),
+            "consecutive_disengaged": consecutive_disengaged,
+            "input_tokens": state.get("input_tokens", 0) + input_tokens,
+            "output_tokens": state.get("output_tokens", 0) + output_tokens,
+        }
+
+    @staticmethod
+    def _bump_topic_counts(state: InterviewState, target_skill: str) -> Dict[str, int]:
+        topic_counts = dict(state.get("topic_question_counts", {}) or {})
+        if target_skill:
+            topic_counts[target_skill] = topic_counts.get(target_skill, 0) + 1
+        return topic_counts
