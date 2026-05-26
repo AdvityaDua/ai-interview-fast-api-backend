@@ -4,15 +4,15 @@ import httpx
 import random
 from typing import List, Dict, Any, Optional
 from app.core.config import settings
-from .gemini_client import GeminiClient
+from .llama_client import LlamaClient
 from .langgraph_agent import InterviewState
 from .token_optimized_agent import InterviewGraph, _max_confusion_retries_for_duration, _max_questions_for_duration, _max_questions_per_topic
 from .schemas import Action
 
 class StreamingInterviewSession:
-    def __init__(self, client: GeminiClient):
+    def __init__(self, client: LlamaClient):
         self.client = client
-        self.graph_engine = InterviewGraph(api_key=client.api_key) # Share API key
+        self.graph_engine = InterviewGraph(client=client)
         self.state: InterviewState = {
             "history": [],
             "performance_summary": "The interview is just starting.",
@@ -204,56 +204,9 @@ class StreamingInterviewSession:
             self.input_tokens  += context_usage.get("input_tokens", 0)
             self.output_tokens += context_usage.get("output_tokens", 0)
             
-            # 1b. Extract skills for structured tracking (priority-ordered, JD first)
-            _dev_hint = (
-                "Include specific technologies, languages, frameworks, and algorithms relevant "
-                "to the role. Be granular (e.g. 'React hooks', 'database indexing', 'REST API design')."
-                if interview_type in ("technical", "problem")
-                else "Include both technical and soft skills relevant to the role and interview type."
-            )
-            _jd_hint = (
-                "IMPORTANT: Skills explicitly listed in the JD Required Skills section MUST appear "
-                "first in your list — even if the candidate's resume is weak on them. These are the "
-                "gaps and requirements the interviewer MUST probe."
-                if jd_text and jd_text.strip()
-                else ""
-            )
-            skills_prompt = (
-                f"Based on this context summary, list the top 12 skills/topics to evaluate in a "
-                f"{interview_type} interview for a '{role or 'the role'}' candidate. "
-                f"{_dev_hint} "
-                f"{_jd_hint} "
-                f"Return ONLY a comma-separated list, ordered by importance (JD-required skills first), "
-                f"no numbering, no explanation.\n\n{context}"
-            )
-            # Use retry + model fallback to handle 503 high-demand errors during initialization
-            FALLBACK_MODELS = [self.client.model_name, "gemini-2.0-flash", "gemini-1.5-flash"]
-            skills_res = None
-            for fb_model in FALLBACK_MODELS:
-                try:
-                    skills_res = await asyncio.to_thread(
-                        self.client.client.models.generate_content,
-                        model=fb_model,
-                        contents=skills_prompt
-                    )
-                    if fb_model != self.client.model_name:
-                        print(f"[Session] ✅ Skills extraction fallback to '{fb_model}' succeeded.")
-                    break
-                except Exception as _e:
-                    _err = str(_e).upper()
-                    if "503" in _err or "UNAVAILABLE" in _err:
-                        print(f"[Session] ⚠️ 503 on '{fb_model}' skills extraction, trying next model...")
-                        await asyncio.sleep(2.0)
-                        continue
-                    raise _e
-            if skills_res is None:
-                raise Exception("All models overloaded (503) during skills extraction. Please try again shortly.")
-            initial_skills = [s.strip() for s in skills_res.text.split(',') if s.strip()][:12]
-            
-            if hasattr(skills_res, 'usage_metadata'):
-                self.input_tokens  += getattr(skills_res.usage_metadata, 'prompt_token_count', 0)
-                self.output_tokens += getattr(skills_res.usage_metadata, 'candidates_token_count', 0)
-                print(f"[Session] skills extraction usage: in={getattr(skills_res.usage_metadata, 'prompt_token_count', 0)}, out={getattr(skills_res.usage_metadata, 'candidates_token_count', 0)}")
+            # 1b. Keyword-based skill extraction (no LLM call needed with LlamaClient)
+            initial_skills = self.client.extract_skills(context, interview_type, role, jd_text)
+            print(f"[Session] Skills extracted (keyword-based): {initial_skills}")
 
             # ── Store in cache so future rounds are free ─────────────────────────
             await resume_cache.set(resume_text, jd_text, interview_type, role, company, context, initial_skills)
@@ -446,20 +399,10 @@ class StreamingInterviewSession:
 
     async def report_usage(self, user_id: str, session_id: str):
         """Send token usage to the NestJS backend for analytics."""
-        from app.core.key_manager import key_manager
-        active_model = key_manager.get_gemini_model()
-        # Per-model pricing (USD per 1M tokens)
-        PRICING = {
-            "gemini-2.5-flash":    (0.10,  0.40),
-            "gemini-2.5-pro":      (1.25,  5.00),
-            "gemini-2.0-flash":    (0.10,  0.40),
-            "gemini-1.5-flash":    (0.075, 0.30),
-            "gemini-1.5-flash-8b": (0.0375, 0.15),
-        }
-        in_price, out_price = PRICING.get(active_model, (0.075, 0.30))
-        in_cost    = (self.input_tokens  / 1_000_000) * in_price
-        out_cost   = (self.output_tokens / 1_000_000) * out_price
-        total_cost = in_cost + out_cost
+        active_model = "llama-finetuned"
+        in_cost = 0.0
+        out_cost = 0.0
+        total_cost = 0.0
 
         usage_data = {
             "userId": user_id,

@@ -8,7 +8,7 @@ from app.api.ws_manager import manager
 from app.api.ws_dependencies import get_ws_current_user
 from app.services.ai.stt_service import stt_service
 from app.services.ai.audio_analyzer import AudioAnalyzer
-from app.services.ai.gemini_client import GeminiClient
+from app.services.ai.llama_client import LlamaClient
 from app.services.ai.streaming_session import StreamingInterviewSession
 from app.services.ai.company_interviewer import CompanyGeminiClient, CompanyInterviewSession
 
@@ -350,7 +350,7 @@ async def stream_interview_endpoint(
                     # Topic mode must not be routed to CompanyInterviewer.
                     if is_topic_mode:
                         print(f"[WS] 📚 Topic interviewer mode chosen for topic '{topic_name or topic_id or role}'")
-                        client = GeminiClient()
+                        client = LlamaClient()
                         session = StreamingInterviewSession(client)
                         company = ""
                         if not role and (topic_name or topic_id):
@@ -363,7 +363,7 @@ async def stream_interview_endpoint(
                         session = CompanyInterviewSession(client)
                     else:
                         print(f"[WS] 🤖 Standard Interviewer chosen")
-                        client = GeminiClient()
+                        client = LlamaClient()
                         session = StreamingInterviewSession(client)
 
                     manager.sessions[user_id] = session

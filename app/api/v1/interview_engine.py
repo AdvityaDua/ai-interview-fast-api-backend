@@ -77,10 +77,7 @@ def _validate_user(user: dict | None) -> dict:
 
 
 def _ensure_model_ready() -> InterviewGraph:
-    api_key = key_manager.get_gemini_key()
-    if not api_key:
-        raise HTTPException(status_code=500, detail="Gemini API key is not configured")
-    return InterviewGraph(api_key=api_key, model_name=key_manager.get_gemini_model())
+    return InterviewGraph()
 
 
 @router.post("/interview-engine/init")

@@ -14,7 +14,8 @@ from typing import Any, Dict, List, Optional, TypedDict
 from pydantic import BaseModel, Field
 
 from app.core.key_manager import key_manager
-from .gemini_client import GeminiClient
+from .llama_client import LlamaClient
+from .llama_graph import LlamaInterviewGraph
 from .source_interview_planner import question_fingerprint
 from .schemas import (
     Action,
@@ -145,21 +146,27 @@ def _pick_coding_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] |
 
 
 class InterviewGraph:
-    """Token-optimized replacement for the previous LangGraph interview engine."""
+    """Interview engine — delegates to LlamaInterviewGraph backed by fine-tuned LLaMA."""
 
     def __init__(
         self,
         api_key: str | None = None,
         model_name: str | None = None,
-        client: GeminiClient | None = None,
+        client: LlamaClient | None = None,
     ):
-        if client is not None:
-            self.client = client
-        else:
-            resolved_api_key = api_key or key_manager.get_gemini_key()
-            self.client = GeminiClient(api_key=resolved_api_key, model_name=model_name)
-        self.model_name = getattr(self.client, "model_name", model_name)
+        llama_client = client if isinstance(client, LlamaClient) else LlamaClient()
+        self._llama_graph = LlamaInterviewGraph(client=llama_client)
+        self.client = llama_client
+        self.model_name = "llama-finetuned"
 
+    async def run_turn(self, state: InterviewState) -> InterviewState:
+        return await self._llama_graph.run_turn(state)
+
+    @staticmethod
+    def _bump_topic_counts(state: InterviewState, target_skill: str) -> Dict[str, int]:
+        return LlamaInterviewGraph._bump_topic_counts(state, target_skill)
+
+    # Keep these so nothing that imports them breaks; they are no longer called.
     def _build_system_instruction(self, state: InterviewState) -> str:
         interview_type = state.get("interview_type", "technical")
         role = state.get("role", "")
@@ -260,132 +267,3 @@ RULES
 Return JSON matching the schema exactly.
 """.strip()
 
-    async def run_turn(self, state: InterviewState) -> InterviewState:
-        if state.get("ended"):
-            return state
-
-        system_instruction = self._build_system_instruction(state)
-        prompt = self._build_prompt(state)
-
-        response = await asyncio.to_thread(
-            self.client.client.models.generate_content,
-            model=self.model_name,
-            contents=f"{system_instruction}\n\n{prompt}",
-            config={
-                "response_mime_type": "application/json",
-                "response_schema": OptimizedTurnOutput,
-            },
-        )
-
-        parsed = OptimizedTurnOutput.model_validate_json(response.text)
-        usage_meta = getattr(response, "usage_metadata", None)
-        input_tokens = int(getattr(usage_meta, "prompt_token_count", 0) or 0) if usage_meta else 0
-        output_tokens = int(getattr(usage_meta, "candidates_token_count", 0) or 0) if usage_meta else 0
-
-        skills_remaining = list(state.get("skills_remaining", []))
-        skills_covered = list(state.get("skills_covered", []))
-        new_skills = [skill for skill in parsed.newly_covered_skills if skill and skill not in skills_covered]
-        if new_skills:
-            skills_covered.extend(new_skills)
-            skills_remaining = [skill for skill in skills_remaining if skill not in new_skills]
-
-        if parsed.should_follow_up and parsed.follow_up_hint:
-            follow_up_hint = parsed.follow_up_hint
-        else:
-            follow_up_hint = ""
-
-        questions_asked = list(state.get("questions_asked", []))
-        questions_asked.append(parsed.next_step.question)
-
-        opening_line = (state.get("opening_line") or "").strip()
-        closing_line = (state.get("closing_line") or "").strip()
-        candidate_pool = list(state.get("source_question_candidates", []) or [])
-        must_include_coding = bool(state.get("must_ask_coding_question", False) or state.get("needs_coding_question", False))
-        ended = False
-
-        current_question = parsed.next_step.question.strip()
-        if state.get("turn_number", 0) == 0 and opening_line:
-            if current_question and not _looks_like_greeting(current_question):
-                current_question = f"{opening_line} {current_question}".strip()
-            elif not current_question:
-                current_question = opening_line
-
-        if (
-            must_include_coding
-            and state.get("coding_questions_asked", 0) == 0
-            and state.get("turn_number", 0) > 0
-            and not ended
-        ):
-            coding_candidate = _pick_coding_candidate(candidate_pool)
-            if coding_candidate is not None:
-                current_question = str(coding_candidate.get("question", current_question)).strip() or current_question
-                parsed.next_step.is_coding_question = True
-                parsed.next_step.question = current_question
-                parsed.next_step.target_skill = str(coding_candidate.get("topic", parsed.next_step.target_skill))
-                parsed.next_step.type = parsed.next_step.type or NextStepType.FOLLOW_UP
-
-        last_answer_type = parsed.answer_type
-        if last_answer_type in {"confused", "refused", "off_topic", "wait_requested"}:
-            consecutive_non_answers = state.get("consecutive_non_answers", 0) + 1
-        else:
-            consecutive_non_answers = 0
-
-        if last_answer_type in {"refused", "off_topic"}:
-            consecutive_disengaged = state.get("consecutive_disengaged", 0) + 1
-        else:
-            consecutive_disengaged = 0
-
-        ended = parsed.decision.action == Action.END or parsed.decision.termination_flag
-        end_reason = parsed.decision.reason if ended else state.get("end_reason", "")
-
-        if ended and closing_line:
-            current_question = closing_line
-
-        current_evaluation = parsed.model_dump()
-        current_evaluation["next_step"] = parsed.next_step.model_dump()
-        current_evaluation["decision"] = parsed.decision.model_dump()
-        if parsed.last_answer_evaluation is not None:
-            current_evaluation["last_answer_evaluation"] = parsed.last_answer_evaluation.model_dump()
-
-        if ended and closing_line:
-            current_evaluation["next_step"]["question"] = closing_line
-
-        if candidate_pool:
-            candidate_fingerprints = {str(item.get("fingerprint", "")) for item in candidate_pool if isinstance(item, dict)}
-            if candidate_fingerprints and question_fingerprint(current_question) in candidate_fingerprints:
-                current_evaluation["next_step"]["question"] = current_question
-
-        history = list(state.get("history", []))
-        if state.get("last_user_input"):
-            history.append({"role": "user", "content": state["last_user_input"]})
-        history.append({"role": "model", "content": current_question})
-
-        return {
-            **state,
-            "history": history,
-            "performance_summary": parsed.performance_summary,
-            "skills_remaining": skills_remaining,
-            "skills_covered": skills_covered,
-            "questions_asked": questions_asked,
-            "current_question": current_question,
-            "current_evaluation": current_evaluation,
-            "follow_up_hint": follow_up_hint,
-            "coding_questions_asked": state.get("coding_questions_asked", 0) + (1 if parsed.next_step.is_coding_question else 0),
-            "last_question_was_coding": parsed.next_step.is_coding_question and not ended,
-            "turn_number": state.get("turn_number", 0) + 1,
-            "last_answer_type": last_answer_type,
-            "consecutive_non_answers": consecutive_non_answers,
-            "ended": ended,
-            "end_reason": end_reason,
-            "topic_question_counts": self._bump_topic_counts(state, parsed.next_step.target_skill),
-            "consecutive_disengaged": consecutive_disengaged,
-            "input_tokens": state.get("input_tokens", 0) + input_tokens,
-            "output_tokens": state.get("output_tokens", 0) + output_tokens,
-        }
-
-    @staticmethod
-    def _bump_topic_counts(state: InterviewState, target_skill: str) -> Dict[str, int]:
-        topic_counts = dict(state.get("topic_question_counts", {}) or {})
-        if target_skill:
-            topic_counts[target_skill] = topic_counts.get(target_skill, 0) + 1
-        return topic_counts

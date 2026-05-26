@@ -1,6 +1,6 @@
 from fastapi import WebSocket
 from app.services.ai.streaming_session import StreamingInterviewSession
-from app.services.ai.gemini_client import GeminiClient
+from app.services.ai.llama_client import LlamaClient
 from app.services.redis_cache import redis_cache
 
 
@@ -42,7 +42,7 @@ class ConnectionManager:
         # 2. Try Redis
         cached = await redis_cache.load_session(user_id)
         if cached:
-            client = GeminiClient()
+            client = LlamaClient()
             session = StreamingInterviewSession(client)
             session.context_summary = cached.get("context_summary", "")
             session.history = cached.get("history", [])
@@ -67,7 +67,7 @@ class ConnectionManager:
             return session, True
 
         # 3. Brand new
-        client = GeminiClient()
+        client = LlamaClient()
         session = StreamingInterviewSession(client)
         self.sessions[user_id] = session
         self.audio_metrics[user_id] = []
