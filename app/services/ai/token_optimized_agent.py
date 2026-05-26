@@ -344,7 +344,7 @@ Return JSON matching the schema exactly.
                         f"You MUST return ONLY a valid JSON object matching this exact structure, with no markdown formatting or extra text:\n"
                         f"{{\n"
                         f'  "decision": {{"action": "continue", "reason": "...", "termination_flag": false}},\n'
-                        f'  "next_step": {{"type": "followup", "difficulty": "medium", "question": "...", "target_skill": "...", "is_coding_question": false}},\n'
+                        f'  "next_step": {{"type": "follow_up", "difficulty": "medium", "question": "...", "target_skill": "...", "is_coding_question": false}},\n'
                         f'  "performance_summary": "...",\n'
                         f'  "answer_type": "genuine_answer",\n'
                         f'  "answer_quality": "strong",\n'
