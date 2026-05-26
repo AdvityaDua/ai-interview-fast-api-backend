@@ -3,14 +3,14 @@ import asyncio
 import httpx
 import random
 from typing import List, Dict, Any, Optional
+from .gemini_client import GeminiClient
 from app.core.config import settings
-from .llama_client import LlamaClient
 from .langgraph_agent import InterviewState
 from .token_optimized_agent import InterviewGraph, _max_confusion_retries_for_duration, _max_questions_for_duration, _max_questions_per_topic
 from .schemas import Action
 
 class StreamingInterviewSession:
-    def __init__(self, client: LlamaClient):
+    def __init__(self, client: GeminiClient):
         self.client = client
         self.graph_engine = InterviewGraph(client=client)
         self.state: InterviewState = {
