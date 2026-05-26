@@ -62,8 +62,8 @@ class GeminiClient:
         raise Exception(f"All models overloaded (503). Last tried: {FALLBACK_MODELS}. Please try again shortly.")
 
     def extract_skills(self, context_summary: str, interview_type: str, role: str, jd_text: str = "") -> list:
-        """Keyword-based skill extraction (mirrors LlamaClient.extract_skills)."""
-        from .llama_client import _extract_skills_from_text
+        """Keyword-based skill extraction (mirrors token_optimized_agent.extract_skills)."""
+        from app.services.ai.token_optimized_agent import _extract_skills_from_text
         return _extract_skills_from_text(context_summary, jd_text, role)
 
     async def summarize_context(self, resume_text: str, jd_text: str, interview_type: str = "technical", role: str = "", company: str = "", candidate_name: str = "") -> str:
