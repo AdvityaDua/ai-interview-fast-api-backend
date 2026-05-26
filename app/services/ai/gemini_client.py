@@ -62,9 +62,25 @@ class GeminiClient:
         raise Exception(f"All models overloaded (503). Last tried: {FALLBACK_MODELS}. Please try again shortly.")
 
     def extract_skills(self, context_summary: str, interview_type: str, role: str, jd_text: str = "") -> list:
-        """Keyword-based skill extraction (mirrors token_optimized_agent.extract_skills)."""
-        from app.services.ai.token_optimized_agent import _extract_skills_from_text
-        return _extract_skills_from_text(context_summary, jd_text, role)
+        """Keyword-based skill extraction."""
+        _TOPIC_KEYWORDS = {
+            "Python": ["python", "pandas", "numpy", "fastapi", "flask", "django"],
+            "JavaScript": ["javascript", "typescript", "node.js", "react", "next.js", "vue"],
+            "System Design": ["system design", "microservices", "scalability", "distributed", "architecture"],
+            "Databases": ["sql", "postgres", "mysql", "mongodb", "redis", "database", "nosql"],
+            "APIs": ["api", "rest", "graphql", "websocket", "grpc", "http"],
+            "Testing": ["test", "pytest", "jest", "unit testing", "integration testing", "tdd"],
+            "DevOps": ["docker", "kubernetes", "ci/cd", "aws", "gcp", "azure", "terraform"],
+            "DSA": ["algorithm", "data structure", "leetcode", "dynamic programming", "graph", "tree", "linked list"],
+            "Machine Learning": ["machine learning", "ml", "deep learning", "pytorch", "tensorflow", "transformer", "llm", "rag", "nlp"],
+            "Behavioral": ["leadership", "teamwork", "conflict", "communication", "ownership", "collaboration"],
+            "Problem Solving": ["problem solving", "analytical", "case study", "logical reasoning"],
+            "Product Thinking": ["product", "trade-off", "user impact", "metrics", "stakeholder"],
+        }
+        
+        combined = f"{context_summary}\n{jd_text}\n{role}".lower()
+        skills = [topic for topic, kws in _TOPIC_KEYWORDS.items() if any(kw in combined for kw in kws)]
+        return skills[:12] if skills else ["Problem Solving", "Communication", "Technical Knowledge"]
 
     async def summarize_context(self, resume_text: str, jd_text: str, interview_type: str = "technical", role: str = "", company: str = "", candidate_name: str = "") -> str:
         type_focus = {
