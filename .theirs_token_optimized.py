@@ -151,7 +151,7 @@ def _pick_coding_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] |
 
 
 class InterviewGraph:
-    """Token-optimized interview engine."""
+    """Token-optimized replacement for the previous LangGraph interview engine."""
 
     def __init__(
         self,
@@ -278,7 +278,7 @@ Return JSON matching the schema exactly.
           2. /interviewer — generates the next question
 
         Merges results into an OptimizedTurnOutput.
-        Returns None on any failure (caller should fall back).
+        Returns None on any failure (caller should fall back to Gemini).
         """
         use_evaluator = settings.FINE_TUNED_EVALUATOR_ENABLED
         use_interviewer = settings.FINE_TUNED_INTERVIEWER_ENABLED
@@ -309,7 +309,7 @@ Return JSON matching the schema exactly.
             )
             if eval_data is None:
                 logger.warning(
-                    "[FineTunedGateway] Evaluator call failed — falling back for entire turn"
+                    "[FineTunedGateway] Evaluator call failed — falling back to Gemini for entire turn"
                 )
                 return None
 
@@ -346,7 +346,7 @@ Return JSON matching the schema exactly.
             )
             if interviewer_data is None:
                 logger.warning(
-                    "[FineTunedGateway] Interviewer call failed — falling back for entire turn"
+                    "[FineTunedGateway] Interviewer call failed — falling back to Gemini for entire turn"
                 )
                 return None
 
@@ -390,7 +390,7 @@ Return JSON matching the schema exactly.
             duration_ms = int((time.monotonic() - start) * 1000)
             logger.warning(
                 "[FineTunedGateway] Failed to parse merged gateway response (%dms): "
-                "%s: %s — falling back",
+                "%s: %s — falling back to Gemini",
                 duration_ms, type(exc).__name__, exc,
             )
             return None
