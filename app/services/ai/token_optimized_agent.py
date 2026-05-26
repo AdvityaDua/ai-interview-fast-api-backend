@@ -298,9 +298,16 @@ Return JSON matching the schema exactly.
                     "role": "user",
                     "content": (
                         f"Evaluate the candidate's answer.\n\n{prompt}\n\n"
-                        f"Return JSON with fields: performance_summary, answer_type, "
-                        f"answer_quality, should_follow_up, follow_up_hint, "
-                        f"newly_covered_skills, confidence_in_candidate."
+                        f"You MUST return ONLY a valid JSON object matching this exact structure, with no markdown formatting or extra text:\n"
+                        f"{{\n"
+                        f'  "performance_summary": "...",\n'
+                        f'  "answer_type": "genuine_answer",\n'
+                        f'  "answer_quality": "strong",\n'
+                        f'  "should_follow_up": false,\n'
+                        f'  "follow_up_hint": "...",\n'
+                        f'  "newly_covered_skills": [],\n'
+                        f'  "confidence_in_candidate": "high"\n'
+                        f"}}"
                     ),
                 },
             ]
@@ -334,10 +341,18 @@ Return JSON matching the schema exactly.
                     "content": (
                         f"Generate the next interview question.\n\n{prompt}"
                         f"{eval_context}\n\n"
-                        f"Return JSON with fields: decision (action, reason, termination_flag), "
-                        f"next_step (type, difficulty, question, target_skill, is_coding_question), "
-                        f"performance_summary, answer_type, answer_quality, should_follow_up, "
-                        f"follow_up_hint, newly_covered_skills, confidence_in_candidate."
+                        f"You MUST return ONLY a valid JSON object matching this exact structure, with no markdown formatting or extra text:\n"
+                        f"{{\n"
+                        f'  "decision": {{"action": "continue", "reason": "...", "termination_flag": false}},\n'
+                        f'  "next_step": {{"type": "followup", "difficulty": "medium", "question": "...", "target_skill": "...", "is_coding_question": false}},\n'
+                        f'  "performance_summary": "...",\n'
+                        f'  "answer_type": "genuine_answer",\n'
+                        f'  "answer_quality": "strong",\n'
+                        f'  "should_follow_up": false,\n'
+                        f'  "follow_up_hint": "...",\n'
+                        f'  "newly_covered_skills": [],\n'
+                        f'  "confidence_in_candidate": "high"\n'
+                        f"}}"
                     ),
                 },
             ]
